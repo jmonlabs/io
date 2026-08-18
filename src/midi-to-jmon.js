@@ -33,7 +33,7 @@ export class MidiToJmon {
    * Static conversion method
    * @param {ArrayBuffer|Uint8Array} midiData - MIDI file data
    * @param {Object} options - Conversion options
-   * @returns {Promise<Object>} JMON composition
+   * @returns {Promise<Object>} JMON piece
    */
   static async convert(midiData, options = {}) {
     const converter = new MidiToJmon(options);
@@ -43,7 +43,7 @@ export class MidiToJmon {
   /**
    * Main conversion method
    * @param {ArrayBuffer|Uint8Array} midiData - MIDI file data
-   * @returns {Promise<Object>} JMON composition
+   * @returns {Promise<Object>} JMON piece
    */
   convertToJmon(midiData) {
     let parsed;
@@ -54,20 +54,20 @@ export class MidiToJmon {
     }
 
     // Convert to JMON format
-    const composition = this.buildJmonComposition(parsed, null);
+    const piece = this.buildJmonPiece(parsed, null);
 
     // Validate output using existing validator
     const validator = new JmonValidator();
     const { valid, normalized, errors } = validator.validateAndNormalize(
-      composition,
+      piece,
     );
 
     if (!valid) {
       console.warn("Generated JMON failed validation:", errors);
-      // Return the composition anyway, but log the issues
+      // Return the piece anyway, but log the issues
     }
 
-    return valid ? normalized : composition;
+    return valid ? normalized : piece;
   }
 
   /**
@@ -89,13 +89,13 @@ export class MidiToJmon {
   }
 
   /**
-   * Build JMON composition from parsed MIDI
+   * Build JMON piece from parsed MIDI
    * @param {Object} parsed - Parsed MIDI from Tone.js
    * @param {Object} Tone - Tone.js instance
-   * @returns {Object} JMON composition
+   * @returns {Object} JMON piece
    */
-  buildJmonComposition(parsed, Tone) {
-    const composition = {
+  buildJmonPiece(parsed, Tone) {
+    const piece = {
       format: "jmon",
       version: "1.0",
       tempo: this.extractTempo(parsed),
@@ -105,30 +105,30 @@ export class MidiToJmon {
     // Add optional properties if present
     const timeSignature = this.extractTimeSignature(parsed);
     if (timeSignature) {
-      composition.timeSignature = timeSignature;
+      piece.timeSignature = timeSignature;
     }
 
     const keySignature = this.extractKeySignature(parsed);
     if (keySignature) {
-      composition.keySignature = keySignature;
+      piece.keySignature = keySignature;
     }
 
     const metadata = this.extractMetadata(parsed);
     if (Object.keys(metadata).length > 0) {
-      composition.metadata = metadata;
+      piece.metadata = metadata;
     }
 
     // Add tempo changes if present
     if (this.options.includeTempo && this.hasTempoChanges(parsed)) {
-      composition.tempoMap = this.extractTempoMap(parsed);
+      piece.tempoMap = this.extractTempoMap(parsed);
     }
 
     // Add time signature changes if present
     if (this.hasTimeSignatureChanges(parsed)) {
-      composition.timeSignatureMap = this.extractTimeSignatureMap(parsed);
+      piece.timeSignatureMap = this.extractTimeSignatureMap(parsed);
     }
 
-    return composition;
+    return piece;
   }
 
   /**
@@ -766,7 +766,7 @@ export class MidiToJmon {
  * Export function following existing converter pattern
  * @param {ArrayBuffer|Uint8Array} midiData - MIDI file data
  * @param {Object} options - Conversion options
- * @returns {Promise<Object>} JMON composition
+ * @returns {Promise<Object>} JMON piece
  */
 export async function midiToJmon(midiData, options = {}) {
   const isArrayBuffer =

@@ -5,10 +5,9 @@
  *
  * `format/` is the semantics: what a `tempoMap` does to a beat position, what
  * a `keySignature` string means, what an articulation compiles to. Pure
- * functions over a composition, no audio and no DOM.
+ * functions over a piece, no audio and no DOM.
  *
- * The rest is serialisation: Standard MIDI File both directions, MusicXML,
- * SuperCollider.
+ * The rest is serialisation: Standard MIDI File both directions and MusicXML.
  *
  * No dependencies, and no imports outside this package. ESM source served from
  * GitHub via jsDelivr, no build step.
@@ -27,10 +26,9 @@ export {
 export { parseMidiFile } from "./midi-parser.js";
 export { MidiToJmon, midiToJmon } from "./midi-to-jmon.js";
 export { musicxml, downloadMusicXML } from "./musicxml.js";
-export { supercollider } from "./supercollider.js";
 
 // The format layer, exported because it is the useful half for anyone reading
-// a composition rather than writing one out.
+// a piece rather than writing one out.
 export {
   readTime,
   tempoSegments,
@@ -52,7 +50,7 @@ export {
   compilePerformance,
   compilePerformanceTrack,
   compileEvents,
-  compileComposition,
+  compilePiece,
 } from "./format/performance.js";
 
 export { deriveVisualFromArticulations } from "./format/notation.js";
@@ -63,7 +61,6 @@ import * as midiModule from "./midi.js";
 import { parseMidiFile } from "./midi-parser.js";
 import { midiToJmon, MidiToJmon } from "./midi-to-jmon.js";
 import * as musicxmlModule from "./musicxml.js";
-import { supercollider } from "./supercollider.js";
 import * as timeline from "./format/timeline.js";
 import * as performance from "./format/performance.js";
 import { JmonValidator } from "./format/validate.js";
@@ -90,22 +87,21 @@ export const io = {
   musicxml: musicxmlModule.musicxml,
   downloadMusicXML: musicxmlModule.downloadMusicXML,
 
-  supercollider,
 
   // What the format means. `format` is also what a host injects when it needs
-  // to read a composition without depending on this package by URL.
+  // to read a piece without depending on this package by URL.
   format: {
     ...timeline,
     compilePerformance: performance.compilePerformance,
     compilePerformanceTrack: performance.compilePerformanceTrack,
     compileEvents: performance.compilePerformanceTrack,
-    compileComposition: performance.compilePerformance,
+    compilePiece: performance.compilePerformance,
     deriveVisualFromArticulations,
     JmonValidator,
   },
 
-  validate(composition) {
-    return new JmonValidator().validateAndNormalize(composition);
+  validate(piece) {
+    return new JmonValidator().validateAndNormalize(piece);
   },
 };
 

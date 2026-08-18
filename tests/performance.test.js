@@ -13,7 +13,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { compileEvents, compileComposition } from "../src/format/performance.js";
+import { compileEvents, compilePiece } from "../src/format/performance.js";
 import {
   deriveVisualFromArticulations,
   normalizeArticulations,
@@ -145,8 +145,8 @@ test("a track with no articulations compiles cleanly", () => {
   assert.doesNotThrow(() => compileEvents(track([])));
 });
 
-test("compileComposition compiles every track", () => {
-  const composition = {
+test("compilePiece compiles every track", () => {
+  const piece = {
     format: "jmon", version: "1.0", tempo: 120,
     tracks: [
       track([note(60, 0, 2, { articulations: [{ type: "glissando", target: 67 }] })]),
@@ -154,7 +154,7 @@ test("compileComposition compiles every track", () => {
     ],
   };
 
-  const compiled = compileComposition(composition);
+  const compiled = compilePiece(piece);
   assert.equal(compiled.tracks.length, 2);
   assert.equal(compiled.tracks[0].modulations.length, 1);
   assert.equal(compiled.tracks[1].modulations.length, 0);
@@ -210,12 +210,12 @@ test("a glissando is carried by Standard MIDI File export", async () => {
   const { midiBytes } = await import("../src/midi.js");
   const { parseMidiFile } = await import("../src/midi-parser.js");
 
-  const composition = {
+  const piece = {
     format: "jmon", version: "1.0", tempo: 120,
     tracks: [track([note(60, 0, 2, { articulations: [{ type: "glissando", target: 67 }] })])],
   };
 
-  const parsed = parseMidiFile(await midiBytes(composition));
+  const parsed = parseMidiFile(await midiBytes(piece));
   const sounding = parsed.tracks.find((t) => t.notes.length > 0);
 
   assert.equal(sounding.notes[0].midi, 60, "the note still starts where it started");

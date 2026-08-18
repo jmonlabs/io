@@ -34,19 +34,19 @@ export function readTime(value, beatsPerBar = 4) {
 }
 
 /**
- * Normalise a composition's tempo into a sorted list of segments.
+ * Normalise a piece's tempo into a sorted list of segments.
  *
  * There is always at least one segment starting at beat 0, so callers never
- * have to special-case a composition without a tempo map.
+ * have to special-case a piece without a tempo map.
  *
- * @param {Object} composition - JMON composition
+ * @param {Object} piece - JMON piece
  * @returns {Array<{time: number, tempo: number}>} Ascending, starting at 0
  */
-export function tempoSegments(composition = {}) {
-  const base = composition.tempo || composition.bpm || DEFAULT_TEMPO;
-  const beatsPerBar = readBeatsPerBar(composition);
+export function tempoSegments(piece = {}) {
+  const base = piece.tempo || piece.bpm || DEFAULT_TEMPO;
+  const beatsPerBar = readBeatsPerBar(piece);
 
-  const segments = (composition.tempoMap || [])
+  const segments = (piece.tempoMap || [])
     .filter((entry) => entry && Number.isFinite(Number(entry.tempo)))
     .map((entry) => ({
       time: Math.max(0, readTime(entry.time, beatsPerBar)),
@@ -103,8 +103,8 @@ export function tempoAt(beats, segments) {
 }
 
 /** Beats per bar, from a `"4/4"`-style time signature. */
-export function readBeatsPerBar(composition = {}) {
-  const signature = composition.timeSignature;
+export function readBeatsPerBar(piece = {}) {
+  const signature = piece.timeSignature;
   if (Array.isArray(signature) && signature.length === 2) {
     return signature[0] * (4 / signature[1]);
   }
@@ -122,15 +122,15 @@ export function readBeatsPerBar(composition = {}) {
  * `automation.tracks[id]`, and the deprecated flat `automation.events`. They
  * all reduce to the same thing: a target, and points over time.
  *
- * @param {Object} composition - JMON composition
+ * @param {Object} piece - JMON piece
  * @returns {Array<{id, target, scope, trackId, points: Array<{time, value}>}>}
  *   Empty when automation is absent or disabled
  */
-export function automationChannels(composition = {}) {
-  const automation = composition.automation;
+export function automationChannels(piece = {}) {
+  const automation = piece.automation;
   if (!automation || automation.enabled === false) return [];
 
-  const beatsPerBar = readBeatsPerBar(composition);
+  const beatsPerBar = readBeatsPerBar(piece);
   const channels = [];
 
   const push = (channel, scope, trackId) => {
@@ -203,17 +203,17 @@ export function parseAutomationTarget(target) {
 }
 
 /**
- * Normalise a composition's time signature into a sorted list of segments,
+ * Normalise a piece's time signature into a sorted list of segments,
  * the same way {@link tempoSegments} does for tempo.
  *
- * @param {Object} composition - JMON composition
+ * @param {Object} piece - JMON piece
  * @returns {Array<{time: number, numerator: number, denominator: number, beatsPerBar: number}>}
  */
-export function timeSignatureSegments(composition = {}) {
-  const beatsPerBar = readBeatsPerBar(composition);
-  const base = parseSignature(composition.timeSignature) ?? { numerator: 4, denominator: 4 };
+export function timeSignatureSegments(piece = {}) {
+  const beatsPerBar = readBeatsPerBar(piece);
+  const base = parseSignature(piece.timeSignature) ?? { numerator: 4, denominator: 4 };
 
-  const segments = (composition.timeSignatureMap || [])
+  const segments = (piece.timeSignatureMap || [])
     .map((entry) => {
       const parsed = parseSignature(entry?.timeSignature ?? entry);
       if (!parsed) return null;
@@ -254,7 +254,7 @@ function parseSignature(value) {
 }
 
 /**
- * Resolve a `midi.ccN` automation target through the composition's
+ * Resolve a `midi.ccN` automation target through the piece's
  * `converterHints.tone`, which maps a controller number onto something the
  * audio graph actually has.
  *
@@ -264,11 +264,11 @@ function parseSignature(value) {
  * parameter target.
  *
  * @param {number} cc - Controller number
- * @param {Object} composition - JMON composition
+ * @param {Object} piece - JMON piece
  * @returns {{kind: 'node', node: string, param: string, range?: Array<number>}|null}
  */
-export function resolveCcHint(cc, composition = {}) {
-  const hints = composition.converterHints?.tone;
+export function resolveCcHint(cc, piece = {}) {
+  const hints = piece.converterHints?.tone;
   if (!hints || cc === null || cc === undefined) return null;
 
   const hint = hints[`cc${cc}`];
@@ -359,17 +359,17 @@ export function parseKeySignature(value) {
 }
 
 /**
- * Normalise a composition's key signature into a sorted list of segments, the
+ * Normalise a piece's key signature into a sorted list of segments, the
  * same way {@link tempoSegments} and {@link timeSignatureSegments} do.
  *
- * @param {Object} composition - JMON composition
+ * @param {Object} piece - JMON piece
  * @returns {Array<{time: number, sharps: number, minor: boolean, key: string}>}
  */
-export function keySignatureSegments(composition = {}) {
-  const beatsPerBar = readBeatsPerBar(composition);
-  const base = parseKeySignature(composition.keySignature || "C");
+export function keySignatureSegments(piece = {}) {
+  const beatsPerBar = readBeatsPerBar(piece);
+  const base = parseKeySignature(piece.keySignature || "C");
 
-  const segments = (composition.keySignatureMap || [])
+  const segments = (piece.keySignatureMap || [])
     .filter((entry) => entry && (entry.keySignature || entry.key))
     .map((entry) => ({
       time: Math.max(0, readTime(entry.time, beatsPerBar)),

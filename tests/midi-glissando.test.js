@@ -51,7 +51,7 @@ function parseEvents(bytes) {
 
 // Glissando from 60 to 72 (an octave — beyond MIDI's default ±2 semitones)
 {
-  const composition = {
+  const piece = {
     tempo: 120,
     tracks: [{
       label: "lead",
@@ -62,7 +62,7 @@ function parseEvents(bytes) {
     }],
   };
 
-  const events = parseEvents(midiBytes(composition));
+  const events = parseEvents(midiBytes(piece));
   const bends = events.filter((e) => e.kind === 0xe0);
   const ccs = events.filter((e) => e.kind === 0xb0);
 
@@ -92,13 +92,13 @@ function parseEvents(bytes) {
 
 // pitchEnvelope produces the same kind of bend stream (shared backend)
 {
-  const composition = {
+  const piece = {
     tempo: 120,
     tracks: [{
       notes: [{ pitch: 71, time: 0, duration: 1, pitchEnvelope: [0, 1] }],
     }],
   };
-  const events = parseEvents(midiBytes(composition));
+  const events = parseEvents(midiBytes(piece));
   const bends = events.filter((e) => e.kind === 0xe0);
   assert.ok(bends.length > 4, "pitchEnvelope should emit pitch wheel events");
   const value = (e) => (e.d2 << 7) | e.d1;
@@ -111,11 +111,11 @@ function parseEvents(bytes) {
 
 // Plain notes emit no bend traffic
 {
-  const composition = {
+  const piece = {
     tempo: 120,
     tracks: [{ notes: [{ pitch: 60, time: 0, duration: 1 }] }],
   };
-  const events = parseEvents(midiBytes(composition));
+  const events = parseEvents(midiBytes(piece));
   assert.strictEqual(events.filter((e) => e.kind === 0xe0).length, 0);
   assert.strictEqual(events.filter((e) => e.kind === 0xb0).length, 0);
   console.log("✓ plain notes emit no pitch wheel or RPN events");

@@ -16,12 +16,11 @@ import assert from "node:assert/strict";
 import { midiBytes, midiBase64 } from "../src/midi.js";
 import { midiToJmon } from "../src/midi-to-jmon.js";
 import { parseMidiFile } from "../src/midi-parser.js";
-import { supercollider } from "../src/supercollider.js";
 import { JmonValidator } from "../src/format/validate.js";
 
 const note = (pitch, time, duration = 1, velocity = 0.8) => ({ pitch, duration, time, velocity });
 
-const COMPOSITION = {
+const PIECE = {
   format: "jmon",
   version: "1.0",
   tempo: 120,
@@ -34,7 +33,7 @@ const COMPOSITION = {
 /* --- the MIDI writer ----------------------------------------------------- */
 
 test("midiBytes emits a well-formed Standard MIDI File", async () => {
-  const bytes = await midiBytes(COMPOSITION);
+  const bytes = await midiBytes(PIECE);
 
   assert.ok(bytes instanceof Uint8Array || Array.isArray(bytes));
   const header = Array.from(bytes.slice(0, 4)).map((b) => String.fromCharCode(b)).join("");
@@ -43,7 +42,7 @@ test("midiBytes emits a well-formed Standard MIDI File", async () => {
 });
 
 test("midiBase64 produces decodable base64", async () => {
-  const encoded = await midiBase64(COMPOSITION);
+  const encoded = await midiBase64(PIECE);
   assert.equal(typeof encoded, "string");
   assert.match(encoded, /^[A-Za-z0-9+/]+=*$/);
   assert.equal(Buffer.from(encoded, "base64").subarray(0, 4).toString(), "MThd");
@@ -52,7 +51,7 @@ test("midiBase64 produces decodable base64", async () => {
 /* --- the parser ---------------------------------------------------------- */
 
 test("parseMidiFile reads the header it was given", async () => {
-  const parsed = parseMidiFile(await midiBytes(COMPOSITION));
+  const parsed = parseMidiFile(await midiBytes(PIECE));
 
   assert.equal(parsed.timeUnit, "beats", "times must be in quarter notes");
   assert.ok(parsed.header.ppq > 0);
@@ -65,7 +64,7 @@ test("parseMidiFile rejects data that is not a MIDI file", () => {
 });
 
 test("parseMidiFile accepts every byte container", async () => {
-  const bytes = await midiBytes(COMPOSITION);
+  const bytes = await midiBytes(PIECE);
   const asArray = Array.from(bytes);
   const asBuffer = Uint8Array.from(bytes).buffer;
 
@@ -77,19 +76,19 @@ test("parseMidiFile accepts every byte container", async () => {
 test("parseMidiFile needs no audio library", async () => {
   // Nothing about reading a file should require Tone.js. If this ever starts
   // throwing about a missing Tone instance, the dependency crept back in.
-  const parsed = parseMidiFile(await midiBytes(COMPOSITION));
+  const parsed = parseMidiFile(await midiBytes(PIECE));
   assert.ok(parsed.tracks.length > 0);
 });
 
 /* --- the round trip ------------------------------------------------------ */
 
-test("a composition survives jmon -> midi -> jmon unchanged", async () => {
-  const back = await midiToJmon(await midiBytes(COMPOSITION));
+test("a piece survives jmon -> midi -> jmon unchanged", async () => {
+  const back = await midiToJmon(await midiBytes(PIECE));
 
-  assert.equal(back.tempo, COMPOSITION.tempo);
-  assert.equal(back.tracks.length, COMPOSITION.tracks.length);
+  assert.equal(back.tempo, PIECE.tempo);
+  assert.equal(back.tracks.length, PIECE.tracks.length);
 
-  for (const [i, original] of COMPOSITION.tracks.entries()) {
+  for (const [i, original] of PIECE.tracks.entries()) {
     const recovered = back.tracks[i];
     assert.deepEqual(
       recovered.notes.map((n) => [n.pitch, n.time, n.duration]),
@@ -100,9 +99,9 @@ test("a composition survives jmon -> midi -> jmon unchanged", async () => {
 });
 
 test("the round trip preserves velocity to within MIDI's resolution", async () => {
-  const back = await midiToJmon(await midiBytes(COMPOSITION));
+  const back = await midiToJmon(await midiBytes(PIECE));
 
-  const originals = COMPOSITION.tracks.flatMap((t) => t.notes).map((n) => n.velocity);
+  const originals = PIECE.tracks.flatMap((t) => t.notes).map((n) => n.velocity);
   const recovered = back.tracks.flatMap((t) => t.notes).map((n) => n.velocity);
 
   assert.equal(recovered.length, originals.length);
@@ -166,24 +165,18 @@ test("an injected parser is preferred over the built-in one", async () => {
     }
   }
 
-  const back = await midiToJmon(await midiBytes(COMPOSITION), { parser: FakeMidi });
+  const back = await midiToJmon(await midiBytes(PIECE), { parser: FakeMidi });
   assert.ok(used, "the injected parser was ignored");
   assert.equal(back.tempo, 96);
 });
 
 /* --- other converters ---------------------------------------------------- */
 
-test("supercollider emits source text mentioning the pitches", async () => {
-  const out = await supercollider(COMPOSITION);
-  assert.equal(typeof out, "string");
-  assert.ok(out.length > 0);
-  assert.match(out, /60/, "expected the first pitch to appear in the output");
-});
 
 /* --- the validator ------------------------------------------------------- */
 
-test("the validator accepts a well-formed composition quietly", () => {
-  const { valid, errors, normalized } = new JmonValidator().validateAndNormalize(COMPOSITION);
+test("the validator accepts a well-formed piece quietly", () => {
+  const { valid, errors, normalized } = new JmonValidator().validateAndNormalize(PIECE);
   assert.equal(valid, true, `unexpected errors: ${JSON.stringify(errors)}`);
   assert.equal(normalized.tracks.length, 2);
 });
@@ -265,7 +258,7 @@ test("MusicXML interpolates the tempo instead of writing it literally", async ()
   assert.ok(!xml.includes("${tempo}"), "the template placeholder leaked into the output");
 });
 
-test("a composition with no maps produces no stray mid-score attributes", async () => {
+test("a piece with no maps produces no stray mid-score attributes", async () => {
   const { musicxml } = await import("../src/musicxml.js");
   const xml = musicxml({
     format: "jmon", version: "1.0", tempo: 120,
@@ -350,8 +343,8 @@ test("the writer sets a bend range wide enough for the slide", async () => {
   assert.ok(track.pitchBends.length > 8, "expected a sweep, not a single jump");
 });
 
-test("a plain composition emits no pitch bend at all", async () => {
-  const parsed = parseMidiFile(await midiBytes(COMPOSITION));
+test("a plain piece emits no pitch bend at all", async () => {
+  const parsed = parseMidiFile(await midiBytes(PIECE));
   for (const track of parsed.tracks) {
     assert.equal(track.pitchBends.length, 0, "nothing here slides");
   }
@@ -392,13 +385,13 @@ test("a tempoMap survives jmon -> midi -> jmon", async () => {
   );
 });
 
-test("a composition with no tempoMap still emits exactly one tempo", async () => {
+test("a piece with no tempoMap still emits exactly one tempo", async () => {
   // The tempo track is shared code now, so this guards against a plain
-  // composition growing spurious events.
-  const parsed = parseMidiFile(await midiBytes(COMPOSITION));
+  // piece growing spurious events.
+  const parsed = parseMidiFile(await midiBytes(PIECE));
 
   assert.equal(parsed.header.tempos.length, 1);
-  assert.equal(Math.round(parsed.header.tempos[0].bpm), COMPOSITION.tempo);
+  assert.equal(Math.round(parsed.header.tempos[0].bpm), PIECE.tempo);
   assert.equal(parsed.header.tempos[0].time, 0);
 });
 

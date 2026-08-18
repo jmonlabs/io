@@ -2,8 +2,8 @@
 
 The JMON format: what it means, and how it serialises.
 
-Standard MIDI File both directions, MusicXML, SuperCollider. Plus the layer
-that reads a composition: tempo maps, time and key signatures, automation
+Standard MIDI File both directions, and MusicXML. Plus the layer
+that reads a piece: tempo maps, time and key signatures, automation
 channels, and what an articulation compiles to.
 
 No dependencies and no imports outside this package. ESM source served from
@@ -17,13 +17,12 @@ import io from "https://cdn.jsdelivr.net/gh/jmonlabs/io@main/src/index.js";
 ```
 
 ```js
-const bytes = await io.midiBytes(composition);   // Uint8Array
-io.midi(composition, { filename: "piece.mid" }); // a download link
+const bytes = await io.midiBytes(piece);   // Uint8Array
+io.midi(piece, { filename: "piece.mid" }); // a download link
 const back = await io.midiToJmon(bytes);         // and back
 
-io.musicxml(composition);                        // a MusicXML string
-io.downloadMusicXML(composition);
-io.supercollider(composition);
+io.musicxml(piece);                        // a MusicXML string
+io.downloadMusicXML(piece);
 ```
 
 ## What survives a MIDI round trip
@@ -46,18 +45,18 @@ reader.
 
 ## The format layer
 
-`io.format` is the half that reads a composition rather than writing one out.
+`io.format` is the half that reads a piece rather than writing one out.
 Pure functions, useful on their own:
 
 ```js
-io.format.tempoSegments(composition)        // [{ time, tempo }], always from 0
+io.format.tempoSegments(piece)        // [{ time, tempo }], always from 0
 io.format.beatsToSeconds(beats, segments)   // integrates the tempo map
-io.format.timeSignatureSegments(composition)
-io.format.keySignatureSegments(composition) // { time, sharps, minor, key }
+io.format.timeSignatureSegments(piece)
+io.format.keySignatureSegments(piece) // { time, sharps, minor, key }
 io.format.parseKeySignature("F# minor")     // { sharps: 3, minor: true }
-io.format.automationChannels(composition)   // all three spellings, flattened
+io.format.automationChannels(piece)   // all three spellings, flattened
 io.format.compileEvents(track)              // articulations -> modulations
-io.validate(composition)                    // structural guard
+io.validate(piece)                    // structural guard
 ```
 
 `beatsToSeconds` is the one worth knowing about: with a constant tempo it is
@@ -74,7 +73,7 @@ refuses `https://` imports, so a package whose tests run under Node has no
 other way:
 
 ```js
-jm.play(composition, { Tone, sound, io });
+jm.play(piece, { Tone, sound, io });
 ```
 
 Anything with `io.format`'s shape will do, which is what makes the format

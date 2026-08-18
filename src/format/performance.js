@@ -11,7 +11,7 @@
  *
  * Exports:
  * - compilePerformanceTrack(track, options)
- * - compilePerformance(composition, options)
+ * - compilePerformance(piece, options)
  *
  * Example usage:
  *   import { compilePerformanceTrack } from './PerformanceCompiler.js';
@@ -78,7 +78,7 @@
 /**
  * @typedef {Object} CompiledPerformance
  * @property {Array<CompiledTrack>} tracks
- * @property {Object<string, any>=} metadata - passthrough metadata if composition provided
+ * @property {Object<string, any>=} metadata - passthrough metadata if piece provided
  */
 
 /**
@@ -292,17 +292,17 @@ export function compilePerformanceTrack(track, options = {}) {
 }
 
 /**
- * Compile an entire composition (immutable).
+ * Compile an entire piece (immutable).
  * Produces a parallel array of compiled tracks.
  *
- * @param {Object} composition - { tracks: Array<Track>, ... }
+ * @param {Object} piece - { tracks: Array<Track>, ... }
  * @param {Object} [options]
  * @returns {CompiledPerformance}
  */
-export function compilePerformance(composition, options = {}) {
-  const tracks = normalizeTracks(composition?.tracks);
+export function compilePerformance(piece, options = {}) {
+  const tracks = normalizeTracks(piece?.tracks);
   const compiled = tracks.map((t) => compilePerformanceTrack(t, options));
-  const metadata = composition?.metadata ? { ...composition.metadata } : undefined;
+  const metadata = piece?.metadata ? { ...piece.metadata } : undefined;
   return { tracks: compiled, ...(metadata ? { metadata } : {}) };
 }
 
@@ -469,5 +469,5 @@ function clamp01(v) {
 
 /** Compile one track. The name `jmon/io` exposes. */
 export { compilePerformanceTrack as compileEvents };
-/** Compile a whole composition. */
-export { compilePerformance as compileComposition };
+/** Compile a whole piece. */
+export { compilePerformance as compilePiece };

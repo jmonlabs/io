@@ -9,5 +9,5 @@
   "repository": { "type": "git", "url": "git+https://github.com/jmonlabs/io.git" },
   "bugs": { "url": "https://github.com/jmonlabs/io/issues" },
   "homepage": "https://github.com/jmonlabs/io#readme",
-  "keywords": ["jmon", "midi", "musicxml", "supercollider", "music", "notation", "smf"]
+  "keywords": ["jmon", "midi", "musicxml", "music", "notation", "smf"]
 }

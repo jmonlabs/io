@@ -52,10 +52,10 @@ function encodeTrack(events) {
     return data;
 }
 
-function buildMidiFile(composition) {
-    const bpm = composition.tempo || composition.bpm || 120;
+function buildMidiFile(piece) {
+    const bpm = piece.tempo || piece.bpm || 120;
     const ticksPerBeat = 480;
-    const rawTracks = composition.tracks || [];
+    const rawTracks = piece.tracks || [];
     const tracksArray = Array.isArray(rawTracks)
         ? rawTracks
         : (rawTracks && typeof rawTracks === 'object' ? Object.values(rawTracks) : []);
@@ -63,7 +63,7 @@ function buildMidiFile(composition) {
     const trackChunks = [];
 
     // Track 0: tempo track. One set-tempo meta event per segment of the
-    // composition's tempoMap, so a piece that changes tempo exports as one —
+    // piece's tempoMap, so a piece that changes tempo exports as one —
     // it used to flatten to a single rate at tick 0. Segments come from the
     // same helper the players integrate, so the file agrees with playback.
     // With no tempoMap there is exactly one segment and the output is
@@ -73,10 +73,10 @@ function buildMidiFile(composition) {
     // Built first because a ramp anchor is the more specific instruction and
     // wins at a tick the tempoMap also names: that is the order the players
     // schedule them in, and the file has to agree with what you hear.
-    const tempoEvents = buildTempoRampEvents(composition, ticksPerBeat);
+    const tempoEvents = buildTempoRampEvents(piece, ticksPerBeat);
     const rampTicks = new Set(tempoEvents.map(event => event.tick));
 
-    for (const segment of tempoSegments(composition)) {
+    for (const segment of tempoSegments(piece)) {
         const tick = Math.round(segment.time * ticksPerBeat);
         if (rampTicks.has(tick)) continue;
         const microsecondsPerBeat = Math.round(60000000 / segment.tempo);
@@ -93,7 +93,7 @@ function buildMidiFile(composition) {
     // Time signature (0x58). The writer used to emit none, so an exported
     // piece opened in 4/4 whatever its metre — while the importer read the
     // event back, making the round trip lossy in one direction only.
-    for (const segment of timeSignatureSegments(composition)) {
+    for (const segment of timeSignatureSegments(piece)) {
         tempoEvents.push({
             tick: Math.round(segment.time * ticksPerBeat),
             sortOrder: -3,
@@ -106,7 +106,7 @@ function buildMidiFile(composition) {
     }
 
     // Key signature (0x59). `sf` is signed: negative counts flats.
-    for (const segment of keySignatureSegments(composition)) {
+    for (const segment of keySignatureSegments(piece)) {
         tempoEvents.push({
             tick: Math.round(segment.time * ticksPerBeat),
             sortOrder: -3,
@@ -115,7 +115,7 @@ function buildMidiFile(composition) {
     }
 
     // Title
-    const title = composition.title || composition.metadata?.title || '';
+    const title = piece.title || piece.metadata?.title || '';
     if (title) {
         const titleBytes = writeString(title);
         tempoEvents.push({
@@ -244,12 +244,12 @@ function buildMidiFile(composition) {
  * when it would repeat the previous rounded tempo, so a slow ramp does not
  * fill the track with identical events.
  *
- * @param {Object} composition - JMON composition
+ * @param {Object} piece - JMON piece
  * @param {number} ticksPerBeat
  * @returns {Array<{tick: number, sortOrder: number, bytes: Array<number>}>}
  */
-function buildTempoRampEvents(composition, ticksPerBeat) {
-    const ramps = automationChannels(composition)
+function buildTempoRampEvents(piece, ticksPerBeat) {
+    const ramps = automationChannels(piece)
         .filter(channel => parseAutomationTarget(channel.target).kind === 'tempo');
     if (ramps.length === 0) return [];
 
@@ -387,10 +387,10 @@ export class Midi {
         const noteIndex = midi % 12;
         return noteNames[noteIndex] + octave;
     }
-    static convert(composition) {
-        const bpm = composition.tempo || composition.bpm || 120;
-        const timeSignature = composition.timeSignature || '4/4';
-        const rawTracks = composition.tracks || [];
+    static convert(piece) {
+        const bpm = piece.tempo || piece.bpm || 120;
+        const timeSignature = piece.timeSignature || '4/4';
+        const rawTracks = piece.tracks || [];
         const tracksArray = Array.isArray(rawTracks)
             ? rawTracks
             : (rawTracks && typeof rawTracks === 'object' ? Object.values(rawTracks) : []);
@@ -424,26 +424,26 @@ export class Midi {
 }
 
 /**
- * Encode a JMON composition as a Standard MIDI File and return the raw bytes.
+ * Encode a JMON piece as a Standard MIDI File and return the raw bytes.
  * DOM-free — safe to call from Node, Deno, and notebook kernels.
  *
- * @param {Object} composition - The JMON composition
+ * @param {Object} piece - The JMON piece
  * @returns {Uint8Array} The SMF byte stream
  */
-export function midiBytes(composition) {
-    return buildMidiFile(composition);
+export function midiBytes(piece) {
+    return buildMidiFile(piece);
 }
 
 /**
- * Encode a JMON composition as a base64-encoded MIDI file. Useful for
+ * Encode a JMON piece as a base64-encoded MIDI file. Useful for
  * embedding in data: URLs or handing to notebook MIDI players that expect
  * a string payload. DOM-free.
  *
- * @param {Object} composition - The JMON composition
+ * @param {Object} piece - The JMON piece
  * @returns {string} Base64-encoded SMF bytes (no data: prefix)
  */
-export function midiBase64(composition) {
-    const bytes = buildMidiFile(composition);
+export function midiBase64(piece) {
+    const bytes = buildMidiFile(piece);
     return bytesToBase64(bytes);
 }
 
@@ -453,21 +453,21 @@ export function midiBase64(composition) {
  * data-URL download link, which JupyterLab and most kernels *will* render).
  * Hand the result to `jm.env.present()` to display inline.
  *
- * @param {Object} composition - The JMON composition
+ * @param {Object} piece - The JMON piece
  * @param {Object} [options]
- * @param {string} [options.filename='composition.mid'] - Download filename
+ * @param {string} [options.filename='piece.mid'] - Download filename
  * @param {string} [options.label] - Link label; defaults to the filename
  * @returns {Object} MIME bundle: {audio/midi, text/html, text/plain}
  *
  * @example
- * jm.env.present(jm.converters.midiDisplay(composition));
+ * jm.env.present(jm.converters.midiDisplay(piece));
  */
-export function midiDisplay(composition, options = {}) {
+export function midiDisplay(piece, options = {}) {
     const {
-        filename = "composition.mid",
+        filename = "piece.mid",
         label,
     } = options;
-    const bytes = buildMidiFile(composition);
+    const bytes = buildMidiFile(piece);
     const b64 = bytesToBase64(bytes);
     const sizeKb = (bytes.length / 1024).toFixed(1);
     const linkLabel = label || `⬇ ${filename} (${sizeKb} KB)`;
@@ -504,7 +504,7 @@ function escapeHtml(s) {
  *      with whatever Jupyter has already loaded in the parent page.
  *   2. CSP / script restrictions on the parent page don't affect us.
  *
- * @param {Object} composition - The JMON composition
+ * @param {Object} piece - The JMON piece
  * @param {Object} [options]
  * @param {boolean} [options.visualizer=true] - Render the Magenta piano-roll
  *   visualizer above the player controls.
@@ -515,16 +515,16 @@ function escapeHtml(s) {
  * @returns {Object} MIME bundle: { text/html, audio/midi, text/plain }
  *
  * @example
- * jm.env.present(jm.converters.midiPlayer(composition));
+ * jm.env.present(jm.converters.midiPlayer(piece));
  */
-export function midiPlayer(composition, options = {}) {
+export function midiPlayer(piece, options = {}) {
     const {
         visualizer = true,
         soundFont = "https://storage.googleapis.com/magentadata/js/soundfonts/sgm_plus",
         height: iframeHeight = visualizer ? 220 : 80,
     } = options;
 
-    const bytes = buildMidiFile(composition);
+    const bytes = buildMidiFile(piece);
     const b64 = bytesToBase64(bytes);
     const dataUrl = `data:audio/midi;base64,${b64}`;
 
@@ -603,7 +603,7 @@ function bytesToBase64(bytes) {
 }
 
 /**
- * Convert a JMON composition to a MIDI output. In a browser this returns
+ * Convert a JMON piece to a MIDI output. In a browser this returns
  * an `<a>` download link (the original behavior). In headless environments
  * it returns the raw `Uint8Array` so callers can pipe it to a file or
  * notebook display helper.
@@ -611,19 +611,19 @@ function bytesToBase64(bytes) {
  * For an explicit, environment-agnostic API prefer `midiBytes()` or
  * `midiBase64()`.
  *
- * @param {Object} composition - The JMON composition
+ * @param {Object} piece - The JMON piece
  * @param {Object} [options] - Options
- * @param {string} [options.filename='composition.mid'] - Filename used for
+ * @param {string} [options.filename='piece.mid'] - Filename used for
  *   the download link text (browser only)
  * @returns {HTMLAnchorElement|Uint8Array}
  *
  * @example
- * display(jm.converters.midi(composition));
- * display(jm.converters.midi(composition, { filename: "my-song.mid" }));
+ * display(jm.converters.midi(piece));
+ * display(jm.converters.midi(piece, { filename: "my-song.mid" }));
  */
-export function midi(composition, options = {}) {
-    const { filename = 'composition.mid' } = options;
-    const bytes = buildMidiFile(composition);
+export function midi(piece, options = {}) {
+    const { filename = 'piece.mid' } = options;
+    const bytes = buildMidiFile(piece);
 
     // Headless path: no DOM, return the bytes directly.
     if (typeof document === "undefined" || typeof URL === "undefined" || typeof Blob === "undefined") {

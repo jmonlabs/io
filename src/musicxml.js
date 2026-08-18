@@ -6,21 +6,21 @@ import {
 } from "./format/timeline.js";
 /**
  * Verovio (MusicXML) Converter
- * Converts JMON compositions to MusicXML format for use with Verovio.
+ * Converts JMON pieces to MusicXML format for use with Verovio.
  */
 
 /**
- * Convert JMON composition to MusicXML string
+ * Convert JMON piece to MusicXML string
  *
- * @param {Object} composition - The JMON composition
+ * @param {Object} piece - The JMON piece
  * @returns {string} MusicXML string
  */
-export function musicxml(composition) {
-  const title = composition.title || composition.metadata?.title || 'Untitled';
-  const tempo = composition.tempo || 120;
-  const timeSignature = composition.timeSignature || '4/4';
-  const keySignature = composition.keySignature || 'C';
-  const tracks = composition.tracks || [];
+export function musicxml(piece) {
+  const title = piece.title || piece.metadata?.title || 'Untitled';
+  const tempo = piece.tempo || 120;
+  const timeSignature = piece.timeSignature || '4/4';
+  const keySignature = piece.keySignature || 'C';
+  const tracks = piece.tracks || [];
 
   // Parse time signature
   const [beatsPerMeasure, beatValue] = timeSignature.split('/').map(Number);
@@ -73,9 +73,9 @@ export function musicxml(composition) {
   });
 
   // Mid-score changes, indexed by the beat they land on. JMON declares these
-  // as maps at composition level; the score is where a reader actually sees
+  // as maps at piece level; the score is where a reader actually sees
   // them, so they are emitted into the measure whose start they fall on.
-  const changes = buildScoreChanges(composition, measureDuration);
+  const changes = buildScoreChanges(piece, measureDuration);
 
   // Generate MusicXML
   let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
@@ -212,13 +212,13 @@ export function musicxml(composition) {
 }
 
 /**
- * Download a JMON composition as a MusicXML file
+ * Download a JMON piece as a MusicXML file
  *
- * @param {Object} composition - The JMON composition
- * @param {string} [filename='composition.musicxml'] - Output filename
+ * @param {Object} piece - The JMON piece
+ * @param {string} [filename='piece.musicxml'] - Output filename
  */
-export function downloadMusicXML(composition, filename = 'composition.musicxml') {
-  const xml = musicxml(composition);
+export function downloadMusicXML(piece, filename = 'piece.musicxml') {
+  const xml = musicxml(piece);
   const blob = new Blob([xml], { type: 'application/vnd.recordare.musicxml+xml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -462,25 +462,25 @@ function createEmptyMusicXML(title, tempo, beatsPerMeasure, beatValue, fifths, m
 }
 
 /**
- * Collect the composition's mid-score changes into per-beat buckets.
+ * Collect the piece's mid-score changes into per-beat buckets.
  *
  * `keySignatureMap`, `timeSignatureMap`, `tempoMap` and `annotations` all say
  * "at this beat, something changes". They are gathered once here so the
  * measure loop can ask a single question per measure.
  */
-function buildScoreChanges(composition, measureDuration) {
+function buildScoreChanges(piece, measureDuration) {
   const beatsPerBar = measureDuration;
   const at = (time) => readTime(time, beatsPerBar);
 
-  const keys = (composition.keySignatureMap || [])
+  const keys = (piece.keySignatureMap || [])
     .filter((entry) => entry && entry.keySignature)
     .map((entry) => ({ beat: at(entry.time), keySignature: entry.keySignature }));
 
   // The opening entries are already in the first measure's <attributes>.
-  const meters = timeSignatureSegments(composition).filter((s) => s.time > 0);
-  const tempos = tempoSegments(composition).filter((s) => s.time > 0);
+  const meters = timeSignatureSegments(piece).filter((s) => s.time > 0);
+  const tempos = tempoSegments(piece).filter((s) => s.time > 0);
 
-  const annotations = (composition.annotations || [])
+  const annotations = (piece.annotations || [])
     .filter((entry) => entry && (entry.text || entry.label))
     .map((entry) => ({
       beat: at(entry.time),

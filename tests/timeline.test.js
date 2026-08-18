@@ -46,7 +46,7 @@ test("readBeatsPerBar reads both time-signature spellings", () => {
 
 /* --- tempo segments ------------------------------------------------------ */
 
-test("a composition without a tempoMap still yields one segment", () => {
+test("a piece without a tempoMap still yields one segment", () => {
   assert.deepEqual(tempoSegments({ tempo: 96 }), [{ time: 0, tempo: 96 }]);
   assert.deepEqual(tempoSegments({}), [{ time: 0, tempo: 120 }]);
 });
@@ -63,7 +63,7 @@ test("tempo segments are sorted and anchored at beat zero", () => {
   ]);
 });
 
-test("a tempoMap that starts late keeps the composition tempo before it", () => {
+test("a tempoMap that starts late keeps the piece tempo before it", () => {
   const segments = tempoSegments({ tempo: 100, tempoMap: [{ time: 16, tempo: 80 }] });
   assert.equal(segments[0].time, 0);
   assert.equal(segments[0].time === 0 && segments[0].tempo, 100);
@@ -262,7 +262,7 @@ test("a midiToJmon-shaped automation channel is understood", async () => {
 
 /* --- time signature maps ------------------------------------------------- */
 
-test("a composition without a timeSignatureMap yields one segment", async () => {
+test("a piece without a timeSignatureMap yields one segment", async () => {
   const { timeSignatureSegments } = await import("../src/format/timeline.js");
   assert.deepEqual(timeSignatureSegments({}), [
     { time: 0, numerator: 4, denominator: 4, beatsPerBar: 4 },
@@ -289,8 +289,8 @@ test("time signatures parse from strings, pairs and objects", async () => {
     { timeSignatureMap: [{ time: 4, timeSignature: [6, 8] }] },
     { timeSignatureMap: [{ time: 4, timeSignature: { numerator: 6, denominator: 8 } }] },
   ];
-  for (const composition of forms) {
-    const segment = timeSignatureSegments(composition).at(-1);
+  for (const piece of forms) {
+    const segment = timeSignatureSegments(piece).at(-1);
     assert.equal(segment.numerator, 6);
     assert.equal(segment.denominator, 8);
   }
@@ -300,11 +300,11 @@ test("time signatures parse from strings, pairs and objects", async () => {
 
 test("a midi.cc target resolves through converterHints", async () => {
   const { resolveCcHint, scaleToRange } = await import("../src/format/timeline.js");
-  const composition = {
+  const piece = {
     converterHints: { tone: { cc1: { target: "vibrato", parameter: "depth", range: [0, 0.8] } } },
   };
 
-  const hint = resolveCcHint(1, composition);
+  const hint = resolveCcHint(1, piece);
   assert.deepEqual(hint, { kind: "node", node: "vibrato", param: "depth", range: [0, 0.8] });
   assert.equal(scaleToRange(0.5, hint.range), 0.4);
 });
