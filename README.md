@@ -25,6 +25,9 @@ io.musicxml(piece);                        // a MusicXML string
 io.downloadMusicXML(piece);
 ```
 
+Alongside the other three, [`jmon/studio`](https://github.com/jmonlabs/studio)
+assembles all four and binds the injections, so this becomes `jm.midi(piece)`.
+
 ## What survives a MIDI round trip
 
 **Exactly:** pitches, times, durations, tracks, `tempo` and `tempoMap` (one
