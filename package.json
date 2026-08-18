@@ -1,0 +1,13 @@
+{
+  "name": "@jmon/io",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The JMON format: what it means, and how it serialises. MIDI both ways, MusicXML, SuperCollider. No dependencies, no build step.",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "author": "JMON Labs",
+  "repository": { "type": "git", "url": "git+https://github.com/jmonlabs/io.git" },
+  "bugs": { "url": "https://github.com/jmonlabs/io/issues" },
+  "homepage": "https://github.com/jmonlabs/io#readme",
+  "keywords": ["jmon", "midi", "musicxml", "supercollider", "music", "notation", "smf"]
+}

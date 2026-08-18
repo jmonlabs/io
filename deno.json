@@ -1,0 +1,8 @@
+{
+  "tasks": { "test": "node --test tests/*.test.js" },
+  "lint": { "include": ["src/"], "exclude": ["node_modules/", "tests/"] },
+  "fmt": {
+    "include": ["src/", "tests/"],
+    "options": { "useTabs": false, "lineWidth": 100, "indentWidth": 2, "semiColons": true, "singleQuote": false, "proseWrap": "preserve" }
+  }
+}
