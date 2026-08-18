@@ -460,7 +460,7 @@ export function midiBase64(piece) {
  * @returns {Object} MIME bundle: {audio/midi, text/html, text/plain}
  *
  * @example
- * jm.env.present(jm.converters.midiDisplay(piece));
+ * jm.env.present(jm.midiDisplay(piece));
  */
 export function midiDisplay(piece, options = {}) {
     const {
@@ -515,7 +515,7 @@ function escapeHtml(s) {
  * @returns {Object} MIME bundle: { text/html, audio/midi, text/plain }
  *
  * @example
- * jm.env.present(jm.converters.midiPlayer(piece));
+ * jm.env.present(jm.midiPlayer(piece));
  */
 export function midiPlayer(piece, options = {}) {
     const {
@@ -618,8 +618,8 @@ function bytesToBase64(bytes) {
  * @returns {HTMLAnchorElement|Uint8Array}
  *
  * @example
- * display(jm.converters.midi(piece));
- * display(jm.converters.midi(piece, { filename: "my-song.mid" }));
+ * display(jm.midi(piece));
+ * display(jm.midi(piece, { filename: "my-song.mid" }));
  */
 export function midi(piece, options = {}) {
     const { filename = 'piece.mid' } = options;
