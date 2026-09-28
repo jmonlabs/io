@@ -231,22 +231,36 @@ export function midiInstrumentFor(synth, partId = "P1", indent = "      ") {
   ].join("\n");
 }
 
-/** A right-hand repeat barline, for a track that loops. */
+/**
+ * A right-hand repeat barline, for a track that loops.
+ *
+ * No `<bar-style>`. The DTD allows one, the file is legal with it, and MuseScore
+ * accepts it — and then draws a plain barline and drops the repeat. Emitted
+ * without, it draws the light-heavy barline and the two dots, which is the point.
+ * The repeat implies its own barline anyway, and naming the style here would
+ * collide with the one place a piece really wants it: the final barline.
+ *
+ * @param {string} [indent]
+ * @returns {string}
+ */
 export function repeatRight(indent = "      ") {
   return [
     `${indent}<barline location="right">`,
-    `${indent}  <bar-style>light-heavy</bar-style>`,
     `${indent}  <repeat direction="forward" times="2"/>`,
     `${indent}</barline>`,
     "",
   ].join("\n");
 }
 
-/** A left-hand repeat, opening the piece for a looping track. */
+/**
+ * A left-hand repeat, opening the piece for a looping track.
+ *
+ * @param {string} [indent]
+ * @returns {string}
+ */
 export function repeatLeft(indent = "      ") {
   return [
     `${indent}<barline location="left">`,
-    `${indent}  <bar-style>heavy-light</bar-style>`,
     `${indent}  <repeat direction="backward" times="2"/>`,
     `${indent}</barline>`,
     "",
