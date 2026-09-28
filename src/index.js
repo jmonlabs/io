@@ -56,7 +56,10 @@ export {
 export { deriveVisualFromArticulations } from "./format/notation.js";
 
 // What the MIDI export will not carry, declared beside the writer that drops it.
-export { midiLosses, MIDI_RENDERED_MODULATIONS } from "./midi-losses.js";
+export {
+  exportLosses, midiLosses, EXPORT_TARGETS,
+  MIDI_RENDERED_MODULATIONS, MUSICXML_RENDERED_MODULATIONS,
+} from "./export-losses.js";
 
 export { JmonValidator } from "./format/validate.js";
 
@@ -68,7 +71,7 @@ import * as timeline from "./format/timeline.js";
 import * as performance from "./format/performance.js";
 import { JmonValidator } from "./format/validate.js";
 import { deriveVisualFromArticulations } from "./format/notation.js";
-import { midiLosses } from "./midi-losses.js";
+import { exportLosses } from "./export-losses.js";
 
 export const VERSION = "1.0.0";
 
@@ -118,7 +121,10 @@ export const io = {
    *
    * @param {Object} piece
    * @param {Object} [options]
-   * @param {"midi"} [options.for] - The export target to check against
+   * @param {"midi"|"musicxml"} [options.for] - The export target to check against.
+//   *   Each loss says whether the format cannot express the field (kind
+//   *   "format", nothing to do) or this writer does not yet (kind "writer",
+//   *   a to-do).
    * @returns {{valid:boolean, errors:string[], normalized:Object|null, warnings?:Array}}
    */
   /**
@@ -140,8 +146,8 @@ export const io = {
    */
   validate(piece, options = {}) {
     const result = new JmonValidator().validateAndNormalize(piece);
-    if (options.for === "midi") {
-      result.warnings = midiLosses(piece);
+    if (options.for) {
+      result.warnings = exportLosses(piece, options.for);
     }
     return result;
   },

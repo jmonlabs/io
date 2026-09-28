@@ -693,7 +693,10 @@ test("legacy glissTarget, which sat beside the articulation, is folded in", () =
 // anywhere: the writer has no way to say a field cannot be written. The check
 // lives beside the writer, so the two cannot drift.
 
-import { midiLosses, MIDI_RENDERED_MODULATIONS } from "../src/midi-losses.js";
+import {
+  midiLosses, exportLosses, EXPORT_TARGETS, MIDI_RENDERED_MODULATIONS,
+  MUSICXML_RENDERED_MODULATIONS,
+} from "../src/export-losses.js";
 
 const lossFields = (piece) => midiLosses(piece).map((w) => w.field);
 const aNote = (extra) => ({ pitch: 62, duration: 1, time: 0, velocity: 0.8, ...extra });
@@ -720,6 +723,8 @@ test("the fields MIDI cannot express are named", () => {
     "a Standard MIDI File cannot loop");
   assert.ok(lossFields(aPiece([aNote({})], { synth: "drumkit:acoustic" })).includes("synth"),
     "a sampler name is not a program change");
+  assert.ok(!lossFields(aPiece([aNote({})], { synth: 69 })).includes("synth"),
+    "but a program number is");
   assert.ok(lossFields(aPiece([aNote({})], {}, { audioGraph: [{ type: "Reverb" }] })).includes("audioGraph"),
     "MIDI has no send bus");
   assert.ok(lossFields(aPiece([aNote({ modulations: [] })])).includes("modulations"),
@@ -757,4 +762,62 @@ test("validate takes the target, and only then reports warnings", async () => {
   assert.equal(forMidi.valid, true, "losing a field is not an invalid piece");
   assert.equal(forMidi.warnings.length, 1);
   assert.equal(forMidi.normalized !== null, true, "normalisation is unaffected");
+});
+
+// ─── one loss list per target, and two kinds of loss ───────────────────────
+//
+// I said a DAW that reads notation would get articulations, loops and samplers
+// "for free". Measured, that was wrong: the MusicXML writer emits notes, rests,
+// chords, key, tempo, clef, part names and a title, and nothing else. So a
+// score is not a better target — it is a different one, and currently a worse
+// one for anything expressive. Which is only knowable because the check exists.
+
+test("the target is part of the question", () => {
+  assert.deepEqual(EXPORT_TARGETS.sort(), ["midi", "musicxml"]);
+  const note = aNote({ microtuning: 0.25, articulations: ["staccato"] });
+  const piece = aPiece([note], { loop: true, synth: "piano" });
+  const midi = exportLosses(piece, "midi").map((w) => w.field);
+  const xml = exportLosses(piece, "musicxml").map((w) => w.field);
+  assert.ok(midi.includes("microtuning"));
+  assert.ok(midi.includes("loop"));
+  assert.ok(!midi.includes("articulations"), "staccato reaches MIDI, so MIDI does not warn about it");
+  assert.ok(xml.includes("articulations"), "and MusicXML does not write it at all");
+  assert.ok(xml.includes("velocity"), "even the velocity is lost on the way to a score");
+  assert.notDeepEqual(midi, xml);
+});
+
+test("a loss says whether the format cannot or the writer does not yet", () => {
+  const kindOf = (target, piece, field) =>
+    exportLosses(piece, target).find((w) => w.field === field)?.kind;
+  const note = aNote({});
+  // A MIDI file has no send bus. Nothing to do about that.
+  assert.equal(kindOf("midi", aPiece([note], {}, { audioGraph: [{}] }), "audioGraph"), "format");
+  // A score can say a piece loops, with <barline><repeat>. This writer does not.
+  assert.equal(kindOf("musicxml", aPiece([note], { loop: true }), "loop"), "writer");
+  // MusicXML has <notations>; the writer just does not fill it in.
+  assert.equal(
+    kindOf("musicxml", aPiece([aNote({ articulations: ["staccato"] })]), "articulations"),
+    "writer",
+  );
+});
+
+test("an unknown target is refused rather than passing quietly", () => {
+  assert.throws(() => exportLosses(aPiece([aNote({})]), "wav"), /unknown target/);
+});
+
+test("a piece with nothing in it is clean on both", () => {
+  assert.deepEqual(exportLosses(aPiece([aNote({})]), "midi"), []);
+  assert.equal(MUSICXML_RENDERED_MODULATIONS && Object.keys(MUSICXML_RENDERED_MODULATIONS).length, 0,
+    "the MusicXML writer draws no modulations yet, and says so");
+});
+
+test("validate takes either target", async () => {
+  const { default: io } = await import("../src/index.js");
+  const piece = aPiece([aNote({ microtuning: 0.25 })]);
+  const has = (target, field) => io.validate(piece, { for: target }).warnings.some((w) => w.field === field);
+  assert.ok(has("midi", "microtuning"));
+  assert.ok(has("musicxml", "microtuning"));
+  // a program number is written on MIDI, so only the score complains
+  assert.ok(!has("midi", "synth"), "synth 69 is a program change");
+  assert.ok(has("musicxml", "synth"), "and a score writes only the part name");
 });
