@@ -157,7 +157,7 @@ export function musicxml(piece) {
     const partName = track.label || `Track ${index + 1}`;
     xml += `    <score-part id="${partId}">\n`;
     xml += `      <part-name>${escapeXML(partName)}</part-name>\n`;
-    xml += midiInstrumentFor(track.synth);
+    xml += midiInstrumentFor(track.synth, partId);
     xml += '    </score-part>\n';
   });
   xml += '  </part-list>\n';

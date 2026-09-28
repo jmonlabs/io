@@ -98,8 +98,13 @@ export function dynamicDirection(velocity, indent = "      ") {
 /**
  * A crescendo or diminuendo wedge, or an empty string.
  *
- * A wedge has to be closed, so this emits the opening and the caller closes it
- * at the end of the phrase.
+ * A wedge is a sibling of `<dynamics>` inside `<direction-type>`, not a child of
+ * it: `<dynamics>` takes only the marks — p, pp, f, ff — and the schema rejects
+ * anything else in there. Nesting it, which is what this did first, validates as
+ * well-formed XML and is refused by every reader that validates.
+ *
+ * A wedge has to be closed, so this emits the opening and the caller closes it at
+ * the end of the phrase.
  *
  * @param {string} type - "crescendo" or "diminuendo"
  * @param {string} [indent]
@@ -110,9 +115,7 @@ export function wedgeDirection(type, indent = "      ") {
   return [
     `${indent}<direction placement="below">`,
     `${indent}  <direction-type>`,
-    `${indent}    <dynamics>`,
-    `${indent}      <wedge type="${type}"/>`,
-    `${indent}    </dynamics>`,
+    `${indent}    <wedge type="${type}"/>`,
     `${indent}  </direction-type>`,
     `${indent}</direction>`,
     "",
@@ -124,9 +127,7 @@ export function wedgeStop(indent = "      ") {
   return [
     `${indent}<direction placement="below">`,
     `${indent}  <direction-type>`,
-    `${indent}    <dynamics>`,
-    `${indent}      <wedge type="stop"/>`,
-    `${indent}    </dynamics>`,
+    `${indent}    <wedge type="stop"/>`,
     `${indent}  </direction-type>`,
     `${indent}</direction>`,
     "",
@@ -188,7 +189,9 @@ export function notationsFor(articulations, openLine, isLastNote, indent = "    
   const body = [...lines];
   if (ornaments) {
     body.push(`${indent}  <ornaments>`);
-    body.push(`${indent}    <tremolo type="single"/>`);
+    // The count is the element's text, not an attribute: <tremolo> has simple
+    // content, and an empty one is not a valid mark count.
+    body.push(`${indent}    <tremolo type="single">3</tremolo>`);
     body.push(`${indent}  </ornaments>`);
   }
   if (marks.length) {
@@ -206,16 +209,21 @@ export function notationsFor(articulations, openLine, isLastNote, indent = "    
  * A score has no notion of a sampler, so a name is left out; a number is a
  * MIDI program and every reader understands it.
  *
+ * The id is required by the schema, and a score conventionally names the
+ * instrument after the part it plays in.
+ *
  * @param {number|string} synth
+ * @param {string} [partId]
+ * @param {string} [indent]
  * @returns {string}
  */
-export function midiInstrumentFor(synth, indent = "      ") {
+export function midiInstrumentFor(synth, partId = "P1", indent = "      ") {
   if (typeof synth !== "number" || !Number.isFinite(synth)) return "";
   const program = Math.max(1, Math.min(128, Math.round(synth) + 1)); // 0-based -> 1-based
   // Program 96 is the GM drum kit, and a score says so with channel 10.
   const channel = program === 96 ? 10 : 1;
   return [
-    `${indent}<midi-instrument>`,
+    `${indent}<midi-instrument id="${partId}-I1">`,
     `${indent}  <midi-channel>${channel}</midi-channel>`,
     `${indent}  <midi-program>${program}</midi-program>`,
     `${indent}</midi-instrument>`,
