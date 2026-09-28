@@ -821,3 +821,98 @@ test("validate takes either target", async () => {
   assert.ok(!has("midi", "synth"), "synth 69 is a program change");
   assert.ok(has("musicxml", "synth"), "and a score writes only the part name");
 });
+
+// ─── MPE, so a note can carry its own tuning ────────────────────────────────
+//
+// `microtuning` is a per-note offset in semitones and a Standard MIDI File has
+// no message for it. A channel's pitch wheel moves every note on that channel,
+// so in polyphony the only correct answer is a channel per note — which is
+// what MPE is. It is opt-in, because a file with one channel per note is wrong
+// for a synth that is not in MPE mode, and wrong for any GM instrument.
+
+import { assignMpeChannels, bendValueFor, MPE_DEFAULTS, buildMpeNoteEvents } from "../src/midi-mpe.js";
+
+const mpeNote = (pitch, time, duration = 1, extra = {}) =>
+  ({ pitch, duration, time, velocity: 0.8, ...extra });
+const mpePiece = (notes) => ({ tempo: 100, tracks: [{ label: "L", synth: 69, notes }] });
+
+test("bend values are centred at 8192 and scale with the range", () => {
+  assert.equal(bendValueFor(0, 48), 8192, "no offset is centre");
+  assert.ok(bendValueFor(50, 48) > 8192, "positive is up");
+  assert.ok(bendValueFor(-50, 48) < 8192, "negative is down");
+  // A quarter tone is 2400 cents, a quarter of a 48-semitone range.
+  assert.equal(bendValueFor(2400, 48), 12288);
+  // The same cents in a narrower range is a larger share of the wheel, which is
+  // the resolution trade a controller with a 2-semitone bend buys.
+  assert.ok(bendValueFor(50, 2) > bendValueFor(50, 48));
+});
+
+test("notes sounding at once get a channel each, and a channel is reused once free", () => {
+  const together = [60, 62, 64, 65].map((p) => mpeNote(p, 0, 4));
+  const plan = assignMpeChannels(together);
+  assert.equal(new Set(plan.map((p) => p.channel)).size, 4, "four at once, four channels");
+
+  const sequence = [mpeNote(60, 0, 1), mpeNote(62, 1, 1), mpeNote(64, 2, 1)];
+  const serial = assignMpeChannels(sequence);
+  assert.equal(new Set(serial.map((p) => p.channel)).size, 1,
+    "each note has finished before the next starts, so one channel does");
+});
+
+test("more simultaneous notes than channels is refused, not mis-tuned", () => {
+  // Two notes on one channel cannot both be detuned, and a file that quietly
+  // tunes one of them wrong is worse than no file.
+  const at = (n) => Array.from({ length: n }, (_, i) => mpeNote(60 + i, 0, 4, { microtuning: 0.01 }));
+
+  assert.doesNotThrow(() => assignMpeChannels(at(MPE_DEFAULTS.members.length)),
+    "as many at once as there are member channels");
+  assert.throws(() => assignMpeChannels(at(MPE_DEFAULTS.members.length + 1)), /more notes sound at once/);
+
+  // MIDI has sixteen channels, so the ceiling is real and no pool reaches past
+  // it. Channels above 15 are not MIDI channels and are dropped, not invented.
+  assert.throws(() => assignMpeChannels(at(20), { members: Array.from({ length: 24 }, (_, i) => i) }),
+    /ceiling is 16/, "a wider pool cannot invent channels that do not exist");
+});
+
+test("the default pool leaves the drum channel out of the zone", () => {
+  // 9 is the GM drum channel; a piece with drums and tuned notes should not put
+  // them in the same zone.
+  assert.ok(!MPE_DEFAULTS.members.includes(9), "channel 10 (1-indexed) stays free for drums");
+  assert.equal(MPE_DEFAULTS.master, 15, "15 is the MPE master");
+});
+
+test("mpe is opt-in, and off by default microtuning is still lost", async () => {
+  const piece = mpePiece([mpeNote(60, 0, 2, { microtuning: 0.25 })]);
+  const plain = parse(midiBytes(piece));
+  const bent = parse(midiBytes(piece, { mpe: true }));
+  assert.equal(plain.pitchBends, 0, "without mpe there is one channel and one bend, so none is written");
+  assert.equal(bent.pitchBendRange, 48, "with mpe the sensitivity is sent as RPN 0/0");
+  assert.ok(bent.pitchBends > 0, "and the note is bent");
+  assert.equal(plain.notes, bent.notes, "the same notes either way");
+});
+
+test("a detuned note is bent before it sounds and released after", () => {
+  const { events } = buildMpeNoteEvents([mpeNote(60, 0, 2, { microtuning: 0.25 })], { ...MPE_DEFAULTS, ticksPerBeat: 480 });
+  const bends = events.filter((e) => (e.bytes[0] & 0xf0) === 0xe0);
+  assert.ok(bends.length >= 2, "one to set it, one to centre it again");
+  assert.ok(bends[0].sortOrder < 1, "set before the note-on that shares its tick");
+  assert.ok(bends[bends.length - 1].sortOrder < 1, "and the reset goes with the note-off");
+  const last = bends[bends.length - 1];
+  assert.equal(((last.bytes[2] << 7) | last.bytes[1]), 8192,
+    "the last bend is centre, so the next note on that channel is not still bent");
+});
+
+test("a note with no microtuning gets no bend events", () => {
+  const { events } = buildMpeNoteEvents([mpeNote(60, 0, 1)], { ...MPE_DEFAULTS, ticksPerBeat: 480 });
+  assert.equal(events.filter((e) => (e.bytes[0] & 0xf0) === 0xe0).length, 0);
+});
+
+/** Read a file back with the package's parser, flattened to what is asserted. */
+function parse(bytes) {
+  const p = parseMidiFile(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  const track = p.tracks.find((t) => t.notes && t.notes.length);
+  return {
+    notes: p.tracks.reduce((n, t) => n + (t.notes?.length ?? 0), 0),
+    pitchBends: p.tracks.reduce((n, t) => n + (t.pitchBends?.length ?? 0), 0),
+    pitchBendRange: track?.pitchBendRange,
+  };
+}

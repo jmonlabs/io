@@ -1,5 +1,6 @@
 /* jmon-to-midi.js - Convert JMON format to Standard MIDI File (no external deps) */
 import { compilePerformanceTrack as compileEvents } from "./format/performance.js";
+import { buildMpeNoteEvents, MPE_DEFAULTS } from "./midi-mpe.js";
 import {
     tempoSegments,
     timeSignatureSegments,
@@ -177,9 +178,15 @@ function buildExpressionEvents(notes, channel, ticksPerBeat) {
   return events;
 }
 
-function buildMidiFile(piece) {
+function buildMidiFile(piece, options = {}) {
     const bpm = piece.tempo || piece.bpm || 120;
     const ticksPerBeat = 480;
+    // `mpe` is opt-in: a file with one channel per note is wrong for a synth
+    // that is not in MPE mode, and wrong for any GM instrument. Pass it when the
+    // destination is an MPE one and `microtuning` matters.
+    const mpeConfig = typeof options.mpe === "object" && options.mpe !== null ? options.mpe : null;
+    const mpe = options.mpe === true || mpeConfig !== null;
+    const masterChannel = (mpeConfig && mpeConfig.master) ?? MPE_DEFAULTS.master;
     const rawTracks = piece.tracks || [];
     const tracksArray = Array.isArray(rawTracks)
         ? rawTracks
@@ -301,6 +308,28 @@ function buildMidiFile(piece) {
         // are things MIDI says directly — a shorter note and a louder one — so
         // they are applied to the note instead of becoming controller events.
         const perIndex = modulationsByNote(notesWithTime, bpm);
+
+        if (mpe) {
+            // One channel per note, so `microtuning` — a per-note offset with
+            // no MIDI message of its own — can be written as a pitch bend.
+            // Throws if the texture is denser than the member channels, because
+            // two notes on one channel cannot both be detuned and a file that
+            // quietly mis-tunes is worse than no file.
+            const plan = buildMpeNoteEvents(notesWithTime, { ...MPE_DEFAULTS, ...mpeConfig, ticksPerBeat });
+            events.push(...plan.events);
+            if (plan.channelsUsed.length > 1) {
+                // Expression and dynamics, on the master channel, so one
+                // place governs the zone.
+                for (const m of (modulationsByNote(notesWithTime, bpm).get(0) || [])) {
+                    if (m.type === "amplitude") {
+                        events.push({ tick: 0, sortOrder: -1, bytes: [0xb0 | masterChannel, 11, 64] });
+                        break;
+                    }
+                }
+            }
+            trackChunks.push(encodeTrack(events));
+            continue;
+        }
 
         for (let i = 0; i < notesWithTime.length; i++) {
             const note = notesWithTime[i];
@@ -579,8 +608,8 @@ export class Midi {
  * @param {Object} piece - The JMON piece
  * @returns {Uint8Array} The SMF byte stream
  */
-export function midiBytes(piece) {
-    return buildMidiFile(piece);
+export function midiBytes(piece, options = {}) {
+    return buildMidiFile(piece, options);
 }
 
 /**
@@ -591,8 +620,8 @@ export function midiBytes(piece) {
  * @param {Object} piece - The JMON piece
  * @returns {string} Base64-encoded SMF bytes (no data: prefix)
  */
-export function midiBase64(piece) {
-    const bytes = buildMidiFile(piece);
+export function midiBase64(piece, options = {}) {
+    const bytes = buildMidiFile(piece, options);
     return bytesToBase64(bytes);
 }
 
@@ -616,7 +645,7 @@ export function midiDisplay(piece, options = {}) {
         filename = "piece.mid",
         label,
     } = options;
-    const bytes = buildMidiFile(piece);
+    const bytes = buildMidiFile(piece, options);
     const b64 = bytesToBase64(bytes);
     const sizeKb = (bytes.length / 1024).toFixed(1);
     const linkLabel = label || `⬇ ${filename} (${sizeKb} KB)`;
@@ -673,7 +702,7 @@ export function midiPlayer(piece, options = {}) {
         height: iframeHeight = visualizer ? 220 : 80,
     } = options;
 
-    const bytes = buildMidiFile(piece);
+    const bytes = buildMidiFile(piece, options);
     const b64 = bytesToBase64(bytes);
     const dataUrl = `data:audio/midi;base64,${b64}`;
 
@@ -772,7 +801,7 @@ function bytesToBase64(bytes) {
  */
 export function midi(piece, options = {}) {
     const { filename = 'piece.mid' } = options;
-    const bytes = buildMidiFile(piece);
+    const bytes = buildMidiFile(piece, options);
 
     // Headless path: no DOM, return the bytes directly.
     if (typeof document === "undefined" || typeof URL === "undefined" || typeof Blob === "undefined") {
