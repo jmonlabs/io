@@ -44,7 +44,7 @@ const EXPORTERS = {
     },
     noteFields: new Set([
       "pitch", "duration", "time", "velocity",
-      "articulations", "articulation", "glissTarget", "pitchEnvelope",
+      "articulations", "articulation", "glissTarget", "pitchEnvelope", "amplitudeEnvelope",
     ]),
     trackFields: new Set([
       "label", "name", "notes", "events", "synth", "instrument",
@@ -117,6 +117,10 @@ const EXPORTERS = {
       pitchEnvelope: {
         kind: "format",
         why: "a pitch envelope is a curve with a shape; <glissando> and <slide> are a straight line between two notes, and cannot hold it",
+      },
+      amplitudeEnvelope: {
+        kind: "format",
+        why: "a score marks a dynamic or a hairpin between notes; the swell inside one held note is a way of playing it, not a sign",
       },
       channel: { kind: "format", why: "a score has no channel" },
       cc: {

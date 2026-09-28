@@ -222,3 +222,33 @@ test("a glissando is carried by Standard MIDI File export", async () => {
   assert.ok(sounding.pitchBends.length > 8, "the slide should be a sweep of bend events");
   assert.ok(sounding.pitchBendRange >= 7, "the bend range must cover a fifth");
 });
+
+/* --- loudness inside a note ---------------------------------------------- */
+
+test("an amplitude envelope of numbers is spread across the note", () => {
+  const [mod] = modulationsOf([note(60, 4, 2, { amplitudeEnvelope: [0, 1, 0.5] })]);
+  assert.equal(mod.type, "amplitude");
+  assert.equal(mod.subtype, "envelope");
+  assert.deepEqual(mod.anchors, [
+    { time: 4, value: 0 },
+    { time: 5, value: 1 },
+    { time: 6, value: 0.5 },
+  ], "times are absolute beats, values multiples of the velocity");
+});
+
+test("amplitude anchors are clamped to the note, and never negative", () => {
+  const [mod] = modulationsOf([note(60, 0, 2, {
+    amplitudeEnvelope: [{ time: 3, value: 0.4 }, { time: 0.5, value: -1 }],
+  })]);
+  assert.deepEqual(mod.anchors, [
+    { time: 0, value: 0 },
+    { time: 0.5, value: 0 },
+    { time: 2, value: 0.4 },
+  ], "a late first anchor holds its level from the onset; a time past the end is the end");
+});
+
+test("a lone level is constant, and a rest has no envelope", () => {
+  const [mod] = modulationsOf([note(60, 0, 3, { amplitudeEnvelope: [0.6] })]);
+  assert.deepEqual(mod.anchors, [{ time: 0, value: 0.6 }, { time: 3, value: 0.6 }]);
+  assert.equal(modulationsOf([note(null, 0, 1, { amplitudeEnvelope: [0, 1] })]).length, 0);
+});

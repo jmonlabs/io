@@ -38,6 +38,12 @@
  *   array of numbers spread evenly across the note duration (SCAMP-style, e.g.
  *   [0, 1] bends up one semitone), or anchor objects with `time` in beats
  *   relative to note start and `value` in semitones.
+ * @property {Array<number|{time:number,value:number}>=} amplitudeEnvelope -
+ *   Loudness across the note, as a multiple of its velocity (1 = the velocity,
+ *   0 = silence). Either numbers spread evenly across the duration
+ *   ([0, 1, 0.7] swells in and eases off), or anchor objects with `time` in
+ *   beats relative to note start. This is the shape of a bow stroke or a
+ *   breath; `velocity` stays the note's overall level.
  */
 
 /**
@@ -52,8 +58,9 @@
  * @property {"pitch"|"amplitude"|"durationScale"|"velocityBoost"} type
  * @property {number} index - note index in the track
  * @property {string=} subtype - e.g., "glissando", "portamento", "bend", "envelope", "crescendo", "diminuendo", "vibrato", "tremolo"
- * @property {Array<{time:number,value:number}>=} anchors - Unified pitch-curve representation:
- *   absolute time in beats, value in cents relative to the note's written pitch.
+ * @property {Array<{time:number,value:number}>=} anchors - Unified curve representation,
+ *   absolute time in beats. For `pitch`, value in cents relative to the note's written
+ *   pitch; for `amplitude/envelope`, value as a multiple of the note's velocity.
  *   Players and exporters should consume this rather than from/to/amount.
  * @property {number=} from - source pitch (MIDI) for pitch-type curves
  * @property {number=} to - target pitch (MIDI) for pitch-type curves
@@ -115,6 +122,24 @@ export function compilePerformanceTrack(track, options = {}) {
       if (envAnchors) {
         modulations.push({
           type: "pitch",
+          subtype: "envelope",
+          index: i,
+          anchors: envAnchors.map((a) => ({ time: onset + a.time, value: a.value })),
+          start: onset,
+          end,
+          curve: "linear",
+        });
+      }
+    }
+
+    // Amplitude envelope: loudness inside the note, as a multiple of its
+    // velocity. Compiles to anchors like the pitch envelope, so players and
+    // exporters read one representation.
+    if (!isRest && n.amplitudeEnvelope != null) {
+      const envAnchors = normalizeAmplitudeEnvelope(n.amplitudeEnvelope, dur);
+      if (envAnchors) {
+        modulations.push({
+          type: "amplitude",
           subtype: "envelope",
           index: i,
           anchors: envAnchors.map((a) => ({ time: onset + a.time, value: a.value })),
@@ -405,6 +430,43 @@ function normalizePitchEnvelope(envelope, dur) {
     if (anchors[0].time > 0) anchors.unshift({ time: 0, value: 0 });
   }
 
+  return anchors;
+}
+
+/**
+ * Normalize a note's amplitudeEnvelope to anchors relative to the note start:
+ * [{ time: beats from note start, value: multiple of the note's velocity }].
+ *
+ * Accepts the same two shapes as a pitch envelope: numbers spread evenly
+ * across the duration, or { time, value } anchors (time clamped to the note,
+ * value floored at 0). A lone number is a constant level. Anchors that start
+ * late hold the first value from the note's onset.
+ *
+ * @param {Array<number|{time:number,value:number}>} envelope
+ * @param {number} dur - note duration in beats
+ * @returns {Array<{time:number,value:number}>|undefined}
+ */
+function normalizeAmplitudeEnvelope(envelope, dur) {
+  if (!Array.isArray(envelope) || envelope.length === 0) return undefined;
+  const span = Math.max(0, dur);
+  const level = (v) => Math.max(0, toNumber(v, 1));
+
+  if (envelope.every((p) => typeof p === "number")) {
+    if (envelope.length === 1) {
+      return [{ time: 0, value: level(envelope[0]) }, { time: span, value: level(envelope[0]) }];
+    }
+    return envelope.map((v, k) => ({ time: (k / (envelope.length - 1)) * span, value: level(v) }));
+  }
+
+  const anchors = envelope
+    .filter((p) => p && typeof p === "object")
+    .map((p) => ({
+      time: Math.max(0, Math.min(span, toNumber(p.time, 0))),
+      value: level(p.value),
+    }))
+    .sort((a, b) => a.time - b.time);
+  if (anchors.length === 0) return undefined;
+  if (anchors[0].time > 0) anchors.unshift({ time: 0, value: anchors[0].value });
   return anchors;
 }
 

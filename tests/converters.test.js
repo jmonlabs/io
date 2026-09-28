@@ -651,6 +651,12 @@ test("crescendo becomes CC 11, and the fader is returned to rest", () => {
   assert.ok(values);
 });
 
+test("an amplitude envelope becomes a CC 11 curve", () => {
+  // The onset level, one event per anchor, and the fader back to rest.
+  const bowed = roundTrip({ amplitudeEnvelope: [0.2, 1, 0.6] });
+  assert.equal(bowed.cc11, 5);
+});
+
 test("a note can never export as a note-on with no note-off", () => {
   // A durationScale big enough to round to zero ticks would be a stuck key.
   const tiny = roundTrip({ articulations: ["staccato"] });
@@ -714,6 +720,7 @@ test("a piece that survives the export is not warned about", () => {
   assert.deepEqual(lossFields(aPiece([aNote({ articulations: [{ type: "glissando", target: 72 }] })])), [],
     "and a glissando is a pitch curve");
   assert.deepEqual(lossFields(aPiece([aNote({ pitchEnvelope: [0, 2] })])), [], "as is a pitch envelope");
+  assert.deepEqual(lossFields(aPiece([aNote({ amplitudeEnvelope: [0, 1] })])), [], "and an amplitude envelope");
 });
 
 test("the fields MIDI cannot express are named", () => {
@@ -811,6 +818,7 @@ test("a loss says whether the format cannot or the writer does not yet", () => {
   // straight line between two notes and cannot hold it. So this is a wall too,
   // and saying so is what stops it being rebuilt as a to-do every few months.
   assert.equal(kindOf("musicxml", aPiece([aNote({ pitchEnvelope: {} })]), "pitchEnvelope"), "format");
+  assert.equal(kindOf("musicxml", aPiece([aNote({ amplitudeEnvelope: [0, 1] })]), "amplitudeEnvelope"), "format");
   // A bend is the remaining writer gap on a score: MusicXML has a glyph for most
   // things and not for this, and the writer says so rather than guessing one.
   const bend = exportLosses(
