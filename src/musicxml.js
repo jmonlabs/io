@@ -15,6 +15,20 @@ import {
  * @param {Object} piece - The JMON piece
  * @returns {string} MusicXML string
  */
+import {
+  articulationsOf,
+  divisionsFor,
+  dynamicDirection,
+  dynamicFor,
+  midiInstrumentFor,
+  notationsFor,
+  repeatLeft,
+  repeatRight,
+  wedgeDirection,
+  wedgeStop,
+} from "./musicxml-notation.js";
+import { compilePerformanceTrack } from "./format/performance.js";
+
 export function musicxml(piece) {
   const title = piece.title || piece.metadata?.title || 'Untitled';
   const tempo = piece.tempo || 120;
@@ -59,8 +73,57 @@ export function musicxml(piece) {
     }))
   }));
 
+  // An accent raises the velocity it is written on and a crescendo shapes the
+  // level across the note, so both are applied before the score is written — the
+  // same modulations the MIDI writer applies.
+  //
+  // A staccato deliberately is not applied to the duration. In MusicXML the
+  // duration of a note is the time between it and the next note, so shortening
+  // it does not shorten the note, it deletes the time the next note starts in
+  // and the measure gets a rest where the composer wrote none. A staccato is a
+  // mark in <notations>, and the player is the one who shortens it.
+  const scored = quantizedTracks.map((track) => {
+    const perIndex = new Map();
+    try {
+      const compiled = compilePerformanceTrack({ notes: track.notes }, { tempo });
+      for (const m of compiled.modulations ?? []) {
+        if (m.index === undefined) continue;
+        if (!perIndex.has(m.index)) perIndex.set(m.index, []);
+        perIndex.get(m.index).push(m);
+      }
+    } catch (_) {
+      // A note the compiler dislikes is written unaltered rather than not at all.
+    }
+    return {
+      ...track,
+      notes: track.notes.map((note, i) => {
+        let velocity = typeof note.velocity === "number" ? note.velocity : 0.8;
+        let wedge = null;
+        for (const m of perIndex.get(i) ?? []) {
+          if (m.type === "velocityBoost" && Number.isFinite(Number(m.amountBoost))) {
+            velocity = Math.max(0, Math.min(1, velocity + Number(m.amountBoost)));
+          }
+          if (m.type === "amplitude" && (m.subtype === "crescendo" || m.subtype === "diminuendo")) {
+            wedge = m.subtype;
+          }
+        }
+        return { ...note, velocity, wedge };
+      }),
+    };
+  });
+
+  // <duration> is an integer number of divisions, or a reader rejects the file.
+  // The resolution is derived from the notes rather than assumed, so that lowering
+  // the grid above cannot quietly start rounding note lengths away.
+  const divisions = divisionsFor(scored);
+  for (const track of scored) {
+    for (const note of track.notes) {
+      note.duration = Math.max(1, Math.round(note.duration * divisions)) / divisions;
+    }
+  }
+
   // Calculate total duration
-  const totalDuration = quantizedTracks.reduce((maxDur, track) => {
+  const totalDuration = scored.reduce((maxDur, track) => {
     const trackEnd = track.notes.reduce((max, note) => {
       return Math.max(max, (note.time || 0) + (note.duration || 1));
     }, 0);
@@ -68,7 +131,7 @@ export function musicxml(piece) {
   }, 0);
 
   // Split tracks into measures
-  const trackMeasures = quantizedTracks.map(track => {
+  const trackMeasures = scored.map(track => {
     return splitIntoMeasures(track.notes, measureDuration, totalDuration);
   });
 
@@ -94,6 +157,7 @@ export function musicxml(piece) {
     const partName = track.label || `Track ${index + 1}`;
     xml += `    <score-part id="${partId}">\n`;
     xml += `      <part-name>${escapeXML(partName)}</part-name>\n`;
+    xml += midiInstrumentFor(track.synth);
     xml += '    </score-part>\n';
   });
   xml += '  </part-list>\n';
@@ -103,6 +167,25 @@ export function musicxml(piece) {
     const partId = `P${trackIndex + 1}`;
     const clef = track.clef || 'treble';
     const measures = trackMeasures[trackIndex];
+    // A glissando or a slide may run across a barline, so the line left open
+    // belongs to the part rather than to the measure.
+    let openLine = null;
+
+    // The dynamic in force in this part. A mark is written when the level
+    // changes, not on every note: four notes at one velocity are one <mf/> and
+    // not four, which is both what an engraver does and what a reader expects.
+    let soundingDynamic = null;
+
+    // The last note a line can run to. Not the last entry of the last measure:
+    // that is usually one of the rests splitIntoMeasures pads the ending with,
+    // and a line cannot reach a rest.
+    let lastPitched = null;
+    for (const measure of measures) {
+      for (const n of measure) {
+        const pitches = Array.isArray(n.pitch) ? n.pitch : [n.pitch];
+        if (n.isRest !== true && pitches.some((p) => typeof p === "number")) lastPitched = n;
+      }
+    }
 
 
     xml += `  <part id="${partId}">\n`;
@@ -110,6 +193,7 @@ export function musicxml(piece) {
     measures.forEach((measure, measureIndex) => {
       const measureNumber = measureIndex + 1;
       xml += `    <measure number="${measureNumber}">\n`;
+      if (track.loop && measureIndex === 0) xml += repeatLeft();
 
       // Mid-score changes. The first measure already carries the opening
       // key, metre and tempo in its <attributes>, so it is skipped here.
@@ -122,7 +206,7 @@ export function musicxml(piece) {
       // First measure: add attributes
       if (measureIndex === 0) {
         xml += '      <attributes>\n';
-        xml += '        <divisions>4</divisions>\n'; // 4 divisions per quarter note
+        xml += `        <divisions>${divisions}</divisions>\n`;
         xml += `        <key>\n`;
         xml += `          <fifths>${fifths}</fifths>\n`;
         xml += `          <mode>${mode}</mode>\n`;
@@ -149,56 +233,69 @@ export function musicxml(piece) {
         xml += '      </direction>\n';
       }
 
-      // Notes in measure — detect simultaneous notes as chords
+      // Notes in measure. A rest and a pitched note are written by one routine,
+      // because the two branches used to differ only in whether a <pitch> or a
+      // <rest> went in — and the expression, which both need, was in neither.
       measure.forEach((note, noteIdx) => {
-        if (note.isRest) {
-          xml += '      <note>\n';
-          xml += '        <rest/>\n';
-          xml += `        <duration>${Math.round(note.duration * 4)}</duration>\n`;
+        // A JMON rest is a note whose pitch is null, and it is not the same
+        // thing as the gap-filling rests splitIntoMeasures inserts. It used to
+        // be written as a pitched note, because midiToPitch(null) read null as 0
+        // — so every rest in a piece was engraved as a middle C.
+        const pitches = (Array.isArray(note.pitch) ? note.pitch : [note.pitch])
+          .filter((p) => typeof p === "number");
+        const isRest = note.isRest === true || pitches.length === 0;
+
+        if (isRest) {
+          xml += "      <note>\n";
+          xml += "        <rest/>\n";
+          xml += `        <duration>${Math.round(note.duration * divisions)}</duration>\n`;
           xml += `        <type>${getDurationType(note.duration)}</type>\n`;
-          xml += '      </note>\n';
-        } else if (Array.isArray(note.pitch)) {
-          // Chord (explicit pitch array)
-          const isChordContinuation = noteIdx > 0 && !measure[noteIdx - 1].isRest &&
-            timeEqual(note.time, measure[noteIdx - 1].time);
-          note.pitch.forEach((p, i) => {
-            xml += '      <note>\n';
-            if (i > 0 || isChordContinuation) {
-              xml += '        <chord/>\n';
-            }
-            const { step, alter, octave } = midiToPitch(p);
-            xml += '        <pitch>\n';
-            xml += `          <step>${step}</step>\n`;
-            if (alter !== 0) {
-              xml += `          <alter>${alter}</alter>\n`;
-            }
-            xml += `          <octave>${octave}</octave>\n`;
-            xml += '        </pitch>\n';
-            xml += `        <duration>${Math.round(note.duration * 4)}</duration>\n`;
-            xml += `        <type>${getDurationType(note.duration)}</type>\n`;
-            xml += '      </note>\n';
-          });
-        } else {
-          // Single note — check if it shares time with the previous note (chord)
-          const isChordContinuation = noteIdx > 0 && !measure[noteIdx - 1].isRest &&
-            timeEqual(note.time, measure[noteIdx - 1].time);
-          xml += '      <note>\n';
-          if (isChordContinuation) {
-            xml += '        <chord/>\n';
-          }
-          const { step, alter, octave } = midiToPitch(note.pitch);
-          xml += '        <pitch>\n';
-          xml += `          <step>${step}</step>\n`;
-          if (alter !== 0) {
-            xml += `          <alter>${alter}</alter>\n`;
-          }
-          xml += `          <octave>${octave}</octave>\n`;
-          xml += '        </pitch>\n';
-          xml += `        <duration>${Math.round(note.duration * 4)}</duration>\n`;
-          xml += `        <type>${getDurationType(note.duration)}</type>\n`;
-          xml += '      </note>\n';
+          xml += "      </note>\n";
+          return;
         }
+
+        // A separate note object sharing this one's time is a chord member, as
+        // is a further pitch of an explicit array.
+        const isChordContinuation = noteIdx > 0 && !measure[noteIdx - 1].isRest &&
+          timeEqual(note.time, measure[noteIdx - 1].time);
+        const isLastNote = note === lastPitched;
+        const notations = notationsFor(articulationsOf(note), openLine, isLastNote);
+        openLine = notations.openLine;
+
+        pitches.forEach((p, i) => {
+          // A wedge and a dynamic are <direction>s, and a direction has to come
+          // before the note it applies to — once per note, not once per pitch.
+          if (i === 0 && note.wedge) xml += wedgeDirection(note.wedge);
+          if (i === 0) {
+            const mark = dynamicFor(note.velocity);
+            if (mark !== soundingDynamic) {
+              xml += dynamicDirection(note.velocity);
+              soundingDynamic = mark;
+            }
+          }
+          xml += "      <note>\n";
+          if (i > 0 || isChordContinuation) xml += "        <chord/>\n";
+          const { step, alter, octave } = midiToPitch(p);
+          xml += "        <pitch>\n";
+          xml += `          <step>${step}</step>\n`;
+          if (alter !== 0) xml += `          <alter>${alter}</alter>\n`;
+          xml += `          <octave>${octave}</octave>\n`;
+          xml += "        </pitch>\n";
+          // The written rhythm, which is what a duration is. How the note is
+          // played is in the <notations> below, not here.
+          xml += `        <duration>${Math.round(note.duration * divisions)}</duration>\n`;
+          xml += `        <type>${getDurationType(note.duration)}</type>\n`;
+          // <notations> belongs to the first pitch only, or a chord is marked
+          // once per note and readers show it three times.
+          if (i === 0) xml += notations.xml;
+          xml += "      </note>\n";
+        });
+        if (note.wedge) xml += wedgeStop();
       });
+
+      // A loop needs both barlines: go back to the top at the last bar, and a
+      // mark at the top saying so. A forward repeat on every bar is not a loop.
+      if (track.loop && measureIndex === measures.length - 1) xml += repeatRight();
 
       xml += '    </measure>\n';
     });

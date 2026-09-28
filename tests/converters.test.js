@@ -14,6 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { midiBytes, midiBase64 } from "../src/midi.js";
+import { musicxml } from "../src/musicxml.js";
 import { midiToJmon } from "../src/midi-to-jmon.js";
 import { parseMidiFile } from "../src/midi-parser.js";
 import { JmonValidator } from "../src/format/validate.js";
@@ -767,10 +768,15 @@ test("validate takes the target, and only then reports warnings", async () => {
 // ─── one loss list per target, and two kinds of loss ───────────────────────
 //
 // I said a DAW that reads notation would get articulations, loops and samplers
-// "for free". Measured, that was wrong: the MusicXML writer emits notes, rests,
-// chords, key, tempo, clef, part names and a title, and nothing else. So a
-// score is not a better target — it is a different one, and currently a worse
-// one for anything expressive. Which is only knowable because the check exists.
+// "for free". Measured, that was wrong: the MusicXML writer emitted notes, rests,
+// chords, key, tempo, clef, part names and a title, and nothing else. A score was
+// then a different target, and a worse one for anything expressive — which is
+// only knowable because the check exists.
+//
+// The notations pass closed that gap. <notations>, <dynamics>, <wedge>,
+// <barline><repeat> and <midi-instrument> are written now, so what is left is
+// short, and every entry in it is a wall rather than a to-do. The last test in
+// this section measures that claim against the writer instead of trusting it.
 
 test("the target is part of the question", () => {
   assert.deepEqual(EXPORT_TARGETS.sort(), ["midi", "musicxml"]);
@@ -778,11 +784,17 @@ test("the target is part of the question", () => {
   const piece = aPiece([note], { loop: true, synth: "piano" });
   const midi = exportLosses(piece, "midi").map((w) => w.field);
   const xml = exportLosses(piece, "musicxml").map((w) => w.field);
+  // Both lose a cents offset and a sampler name: neither has anywhere to put them.
   assert.ok(midi.includes("microtuning"));
-  assert.ok(midi.includes("loop"));
-  assert.ok(!midi.includes("articulations"), "staccato reaches MIDI, so MIDI does not warn about it");
-  assert.ok(xml.includes("articulations"), "and MusicXML does not write it at all");
-  assert.ok(xml.includes("velocity"), "even the velocity is lost on the way to a score");
+  assert.ok(xml.includes("microtuning"));
+  assert.ok(midi.includes("synth"));
+  assert.ok(xml.includes("synth"));
+  // The staccato now survives both, so neither complains about it.
+  assert.ok(!midi.includes("articulations"));
+  assert.ok(!xml.includes("articulations"), "a score is no longer a worse target for expression");
+  // And the two still differ, on the two things only one of them can express.
+  assert.ok(midi.includes("loop"), "a Standard MIDI File cannot loop");
+  assert.ok(!xml.includes("loop"), "but a score has <barline><repeat>, and the writer fills it in");
   assert.notDeepEqual(midi, xml);
 });
 
@@ -792,13 +804,21 @@ test("a loss says whether the format cannot or the writer does not yet", () => {
   const note = aNote({});
   // A MIDI file has no send bus. Nothing to do about that.
   assert.equal(kindOf("midi", aPiece([note], {}, { audioGraph: [{}] }), "audioGraph"), "format");
-  // A score can say a piece loops, with <barline><repeat>. This writer does not.
-  assert.equal(kindOf("musicxml", aPiece([note], { loop: true }), "loop"), "writer");
-  // MusicXML has <notations>; the writer just does not fill it in.
-  assert.equal(
-    kindOf("musicxml", aPiece([aNote({ articulations: ["staccato"] })]), "articulations"),
-    "writer",
-  );
+  // A score has no audio either, and no channel.
+  assert.equal(kindOf("musicxml", aPiece([note], {}, { audioGraph: [{}] }), "audioGraph"), "format");
+  assert.equal(kindOf("musicxml", aPiece([note], { channel: 3 }), "channel"), "format");
+  // A pitch envelope is a curve with a shape; <glissando> and <slide> are a
+  // straight line between two notes and cannot hold it. So this is a wall too,
+  // and saying so is what stops it being rebuilt as a to-do every few months.
+  assert.equal(kindOf("musicxml", aPiece([aNote({ pitchEnvelope: {} })]), "pitchEnvelope"), "format");
+  // A bend is the remaining writer gap on a score: MusicXML has a glyph for most
+  // things and not for this, and the writer says so rather than guessing one.
+  const bend = exportLosses(
+    aPiece([aNote({ articulations: [{ type: "bend", amount: 0.5 }] })]),
+    "musicxml",
+  ).find((w) => w.field.includes("bend"));
+  assert.equal(bend?.kind, "writer");
+  assert.ok(bend?.why.length > 20, "and an explanation, since the point is to act on it");
 });
 
 test("an unknown target is refused rather than passing quietly", () => {
@@ -807,8 +827,7 @@ test("an unknown target is refused rather than passing quietly", () => {
 
 test("a piece with nothing in it is clean on both", () => {
   assert.deepEqual(exportLosses(aPiece([aNote({})]), "midi"), []);
-  assert.equal(MUSICXML_RENDERED_MODULATIONS && Object.keys(MUSICXML_RENDERED_MODULATIONS).length, 0,
-    "the MusicXML writer draws no modulations yet, and says so");
+  assert.deepEqual(exportLosses(aPiece([aNote({})]), "musicxml"), []);
 });
 
 test("validate takes either target", async () => {
@@ -817,9 +836,167 @@ test("validate takes either target", async () => {
   const has = (target, field) => io.validate(piece, { for: target }).warnings.some((w) => w.field === field);
   assert.ok(has("midi", "microtuning"));
   assert.ok(has("musicxml", "microtuning"));
-  // a program number is written on MIDI, so only the score complains
+  // a program number is written on both, so neither complains
   assert.ok(!has("midi", "synth"), "synth 69 is a program change");
-  assert.ok(has("musicxml", "synth"), "and a score writes only the part name");
+  assert.ok(!has("musicxml", "synth"), "and is a <midi-program> on a score");
+});
+
+test("the loss list names every modulation the writer draws, and the writer draws them", () => {
+  // Two halves of one claim, because either alone can rot.
+  //
+  // The first: a key the writer does not implement, so that adding a modulation
+  // to the format layer without teaching the writer about it shows up here.
+  assert.deepEqual(
+    Object.keys(MUSICXML_RENDERED_MODULATIONS).sort(),
+    [
+      "amplitude/crescendo",
+      "amplitude/diminuendo",
+      "amplitude/tremolo",
+      "durationScale",
+      "pitch/glissando",
+      "pitch/portamento",
+      "velocityBoost",
+    ],
+  );
+
+  // The second: each of those keys really does leave its mark in the output. A
+  // registry that claims more than the writer writes is worse than no registry,
+  // because it turns a silent loss into a false all-clear. This reads the bytes
+  // the writer produced, not the code that produced them.
+  const written = (xml) => xml.includes.bind(xml);
+  const cases = [
+    [aNote({ articulations: ["staccato"] }), ["<staccato/>"]],
+    [aNote({ articulations: ["tenuto"] }), ["<tenuto/>"]],
+    [aNote({ articulations: ["accent"] }), ["<accent/>"]],
+    [aNote({ articulations: ["marcato"] }), ["<strong-accent/>"]],
+    [aNote({ articulations: [{ type: "glissando", target: 72 }] }), ['<glissando type="start"']],
+    [aNote({ articulations: [{ type: "portamento", target: 72 }] }), ['<slide type="start"']],
+    [aNote({ articulations: [{ type: "crescendo" }] }), ['<wedge type="crescendo"']],
+    [aNote({ articulations: [{ type: "diminuendo" }] }), ['<wedge type="diminuendo"']],
+    [aNote({ articulations: [{ type: "tremolo", rate: 12, depth: 0.2 }] }), ["<tremolo"]],
+  ];
+  for (const [note, marks] of cases) {
+    // A line needs a note to run to, so every case gets a following note.
+    const xml = musicxml(aPiece([note, aNote({ time: 1, pitch: 72 })]));
+    const isThere = written(xml);
+    for (const mark of marks) {
+      assert.ok(isThere(mark), `the registry promises a ${mark} and the writer wrote none`);
+    }
+  }
+});
+
+test("a line is opened and closed, and never left dangling", () => {
+  // A <glissando> or a <slide> runs from one note to the next, so an unpaired
+  // one is a line a reader has to guess the end of. Both edges matter: the note
+  // after the line closes it, and a line on the last note of a piece has nothing
+  // to run to and is closed where it starts.
+  const pairs = (xml, element) => {
+    const starts = (xml.match(new RegExp(`<${element} type="start"`, "g")) ?? []).length;
+    const stops = (xml.match(new RegExp(`<${element} type="stop"`, "g")) ?? []).length;
+    return { starts, stops };
+  };
+
+  const middle = musicxml(aPiece([
+    aNote({ time: 0, articulations: [{ type: "portamento", target: 64 }] }),
+    aNote({ time: 1, pitch: 64 }),
+    aNote({ time: 2, pitch: 67 }),
+  ]));
+  assert.deepEqual(pairs(middle, "slide"), { starts: 1, stops: 1 }, "closed on the following note");
+
+  // A line on a note followed only by rests still has to close: a rest is not
+  // something a line can reach, so it closes on the note itself.
+  const last = musicxml(aPiece([
+    aNote({ pitch: 60 }),
+    aNote({ pitch: 72, articulations: [{ type: "glissando", target: 74 }] }),
+  ]));
+  assert.deepEqual(pairs(last, "glissando"), { starts: 1, stops: 1 });
+
+  // And a line that runs across a barline is still closed on the far side.
+  const across = musicxml(aPiece([
+    aNote({ time: 0, pitch: 60, articulations: [{ type: "portamento", target: 62 }] }),
+    aNote({ time: 1, pitch: 62 }),
+    aNote({ time: 2, pitch: 64 }),
+    aNote({ time: 3, pitch: 65 }),
+    aNote({ time: 4, pitch: 67 }),
+  ]));
+  assert.ok((across.match(/<measure /g) ?? []).length > 1, "this case is only interesting across bars");
+  assert.deepEqual(pairs(across, "slide"), { starts: 1, stops: 1 });
+});
+
+test("a dynamic is written when the level changes, not on every note", () => {
+  // Four notes at one velocity are one mark, not four: a player reads a dynamic
+  // stamped on every notehead as a new instruction every note.
+  const marksIn = (velocities) => {
+    const notes = velocities.map((velocity, i) => aNote({ time: i, pitch: 60 + i, velocity }));
+    return [...musicxml(aPiece(notes)).matchAll(/<(pp|p|mp|mf|f|ff)\/>/g)].map((m) => m[1]);
+  };
+  assert.deepEqual(marksIn([0.8, 0.8, 0.8, 0.8]), ["mf"], "one mark for one level");
+  assert.deepEqual(marksIn([0.4, 0.4, 0.9, 0.9]), ["p", "f"], "and one more where it changes");
+  assert.deepEqual(marksIn([0.1, 0.5]), ["pp", "mp"]);
+  // Past the ends of the six marks there is nothing more to write, so the
+  // extreme is held rather than inventing a seventh.
+  assert.deepEqual(marksIn([0.0, 1.0]), ["pp", "ff"]);
+});
+
+test("a staccato is a mark, and does not shorten the note", () => {
+  // I got this wrong first and wrote <duration> as the sounding length with
+  // <type> as the written one. It does not survive contact with the measure: a
+  // note's duration is the time between it and the next note, so shortening it
+  // does not shorten the note, it eats the time the next note starts in and the
+  // measure grows a rest the composer never wrote. A staccato quarter came out as
+  // an eighth, a 32nd rest, an eighth.
+  //
+  // So the written rhythm is in <duration> and <type>, and the expression is in
+  // <notations>. The test that matters is the second one: no phantom rests.
+  // Two staccato notes that fill the bar between them, so a <rest/> anywhere in
+  // the output can only mean one was invented.
+  const barOf = (notes) => musicxml(aPiece(notes)).split("<measure")[1].split("<\/measure>")[0];
+  const durationsOf = (bar) =>
+    [...bar.matchAll(/<duration>(\d+)<\/duration>/g)].map((m) => Number(m[1]));
+
+  const staccatoBar = barOf([
+    aNote({ time: 0, pitch: 60, duration: 1.75, articulations: ["staccato"] }),
+    aNote({ time: 1.75, pitch: 62, duration: 2.25, articulations: ["staccato"] }),
+  ]);
+  const divisions = Number(musicxml(aPiece([aNote({})])).match(/<divisions>(\d+)<\/divisions>/)[1]);
+  assert.equal((staccatoBar.match(/<rest\/>/g) ?? []).length, 0,
+    "a shortened note left a hole and the measure grew a rest nobody wrote");
+  assert.ok(durationsOf(staccatoBar).every(Number.isInteger), "and every <duration> is a whole number");
+  assert.equal(durationsOf(staccatoBar).reduce((a, b) => a + b, 0), divisions * 4,
+    "a full 4/4 bar of written time, which is what a bar is");
+  assert.equal((staccatoBar.match(/<staccato\/>/g) ?? []).length, 2,
+    "the mark is what says staccato");
+
+  // A staccato does not make the next note late either, which is the other half
+  // of the same mistake: the written duration of note one is unchanged.
+  assert.deepEqual(durationsOf(staccatoBar), [divisions * 1.75, divisions * 2.25]);
+
+  // And a written rest is still written as one.
+  const withRest = barOf([
+    aNote({ time: 0, pitch: 60, duration: 1.75, articulations: ["staccato"] }),
+    aNote({ time: 1.75, pitch: 62, duration: 0.25 }),
+    aNote({ time: 2, pitch: null, duration: 2 }),
+  ]);
+  assert.equal((withRest.match(/<rest\/>/g) ?? []).length, 1, "the one rest the piece asked for");
+  assert.equal(durationsOf(withRest).reduce((a, b) => a + b, 0), divisions * 4);
+});
+
+test("a rest is a rest", () => {
+  // A JMON rest is a note whose pitch is null, and it used to be engraved as a
+  // middle C: midiToPitch(null) read null as 0, so every rest in every score
+  // became a note. The written value is the giveaway — a rest has no <step>.
+  const xml = musicxml(aPiece([
+    aNote({ time: 0, pitch: 62 }),
+    aNote({ time: 1, pitch: null, duration: 3 }),
+  ]));
+  assert.ok(xml.includes("<rest/>"), "the null pitch is a rest");
+  const measure = xml.split("<measure")[1].split("</measure>")[0];
+  const notes = (measure.match(/<note>/g) ?? []).length;
+  const steps = (measure.match(/<step>/g) ?? []).length;
+  const rests = (measure.match(/<rest\/>/g) ?? []).length;
+  assert.equal(steps, 1, "only the one real note has a pitch");
+  assert.equal(rests, 1);
+  assert.equal(notes, steps + rests, "every note element is either pitched or a rest");
 });
 
 // ─── MPE, so a note can carry its own tuning ────────────────────────────────

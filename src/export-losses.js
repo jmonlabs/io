@@ -14,8 +14,9 @@ import { compilePerformanceTrack } from "./format/performance.js";
  *   File has no send bus and cannot loop; there is nothing a better writer
  *   would do about it. Set the reverb in the DAW.
  * - `writer` — the format has a place for it and this exporter does not write
- *   it. MusicXML has `<notations>` and `<dynamics>`; the writer emits neither.
- *   That is a to-do, not a wall.
+ *   it. Both writers now fill in the notation and the dynamics they have room
+ *   for, so this list is short; when it is not, the entry is a to-do rather than
+ *   a wall, and it says which.
  *
  * Collapsing the two would make the list useless for deciding what to build
  * next, so they are kept apart.
@@ -82,54 +83,48 @@ const EXPORTERS = {
   },
 
   musicxml: {
-    // The writer emits notes, rests, chords, pitch, duration, type, key, time
-    // signature, tempo, clef, part names and the title — and nothing else. No
-    // <notations>, no <dynamics>, no <repeat>, no <midi-instrument>, so every
-    // expressive field is currently a to-do.
-    modulations: {},
-    noteFields: new Set(["pitch", "duration", "time"]),
-    trackFields: new Set(["label", "name", "notes", "clef"]),
+    // Notes, rests, chords, pitch, duration, type, key, metre, tempo, clef, part
+    // names and the title — and now the expression too: <notations>,
+    // <dynamics>, <wedge>, <barline><repeat> and <midi-instrument>.
+    //
+    // Keys are "type/subtype" wherever one type has subtypes the writer treats
+    // differently, and the bare type is left out then, so a subtype nobody taught
+    // the writer is still reported instead of being assumed to be covered.
+    modulations: {
+      durationScale: "a mark in <notations>, not a shorter <duration>: a note's duration is the time to the next note, so shortening it opens a hole in the measure",
+      velocityBoost: "the <dynamics> mark",
+      "amplitude/crescendo": "a <wedge>",
+      "amplitude/diminuendo": "a <wedge>",
+      "amplitude/tremolo": "a <notations><ornaments><tremolo>",
+      "pitch/glissando": "a <notations><glissando>",
+      "pitch/portamento": "a <notations><slide>, opened and closed across two notes",
+    },
+    noteFields: new Set([
+      "pitch", "duration", "time", "velocity",
+      "articulations", "articulation", "glissTarget",
+    ]),
+    trackFields: new Set(["label", "name", "notes", "clef", "synth", "loop"]),
     pieceFields: new Set([
       "title", "tempo", "bpm", "keySignature", "timeSignature", "tracks",
       "format", "version",
     ]),
     fieldNotes: {
       audioGraph: { kind: "format", why: "a score has no audio" },
-      loop: {
-        kind: "writer",
-        why: "MusicXML has <barline><repeat>, which this writer does not emit; the bar is written once",
-      },
       microtuning: {
         kind: "format",
         why: "a score names a pitch, not a tuning; <alter> is whole and half steps only",
       },
-      articulations: {
-        kind: "writer",
-        why: "MusicXML has <notations><articulations>; this writer emits none",
-      },
-      articulation: {
-        kind: "writer",
-        why: "MusicXML has <notations><articulations>; this writer emits none",
-      },
       pitchEnvelope: {
-        kind: "writer",
-        why: "MusicXML has <glissando>, <slide> and <ornaments>; this writer emits none",
+        kind: "format",
+        why: "a pitch envelope is a curve with a shape; <glissando> and <slide> are a straight line between two notes, and cannot hold it",
       },
-      velocity: {
-        kind: "writer",
-        why: "MusicXML has <dynamics>; this writer emits none, so dynamics are lost",
-      },
-      velocityBoost: { kind: "writer", why: "as for velocity: no <dynamics> is written" },
-      durationScale: {
-        kind: "writer",
-        why: "a shorter note is written as a shorter <duration>, but the articulation behind it is not",
-      },
-      amplitude: { kind: "writer", why: "as for velocity: no <dynamics> is written" },
+      channel: { kind: "format", why: "a score has no channel" },
+      // Decided by the value, not the key, so it is checked separately below: a
+      // program number is written as <midi-program>, a sampler name cannot be.
       synth: {
-        kind: "writer",
-        why: "MusicXML has <midi-instrument>; this writer writes only <part-name>",
+        kind: "format",
+        why: "a sampler name is not a MIDI program; a number is written as <midi-program>",
       },
-      channel: { kind: "writer", why: "a score has no channel" },
     },
   },
 };
@@ -210,8 +205,13 @@ export function exportLosses(piece, target = "midi") {
       continue;
     }
     for (const m of perf.modulations || []) {
-      if (!exporter.modulations[m.type]) {
-        add(path, `articulation → ${m.type}`,
+      // A subtype can be drawn where its parent type cannot: a <glissando> and a
+      // <slide> each come from a `pitch` modulation, and neither of them is a
+      // pitch envelope. So the lookup is "type/subtype" first, then the type.
+      const key = m.subtype ? `${m.type}/${m.subtype}` : m.type;
+      const label = `articulation → ${key}`;
+      if (!exporter.modulations[key] && !exporter.modulations[m.type]) {
+        add(path, label,
           "the format layer derives this and the writer draws nothing from it", "writer");
       } else if (m.type === "pitch" && !(Array.isArray(m.anchors) && m.anchors.length > 0)) {
         // vibrato and tremolo compile to a rate and a depth rather than a
