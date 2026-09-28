@@ -314,6 +314,8 @@ export function compilePerformance(piece, options = {}) {
  * Normalize articulations on a note to an array of objects { type, ...params }.
  * Supports:
  * - note.articulations: (string | {type, ...})[]
+ * - note.articulation: string | {type, ...}  (legacy single articulation)
+ * - note.glissTarget with a legacy glissando/portamento (legacy, folded in)
  * @param {Note} note
  * @returns {Array<{type:string,[key:string]:any}>}
  */
@@ -329,7 +331,31 @@ function normalizeArticulations(note) {
     }
   }
 
+  // Legacy single articulation. The file header promises this ("consume both
+  // the new declarative array and legacy fields"), but only the array was ever
+  // read, so a note written as `articulation: "staccato"` compiled to nothing at
+  // all. Folded in here rather than translated at each use site, so the two
+  // spellings cannot drift apart again.
+  const legacy = note?.articulation;
+  /** @type {{type:string,[key:string]:any}|null} */
+  let legacyEntry = null;
+  if (typeof legacy === "string" && legacy.length > 0) {
+    legacyEntry = { type: legacy };
+  } else if (legacy && typeof legacy === "object" && typeof legacy.type === "string") {
+    legacyEntry = { ...legacy };
+  }
 
+  if (legacyEntry) {
+    // Legacy gliss/portamento sat beside the articulation rather than inside
+    // it: `articulation: 'glissando', glissTarget: 72`. Folded onto the entry,
+    // and only when it has no target of its own, so an explicit one wins.
+    const isSlide = legacyEntry.type === "glissando" || legacyEntry.type === "portamento";
+    const hasTarget = typeof legacyEntry.target === "number" || typeof legacyEntry.to === "number";
+    if (isSlide && !hasTarget && typeof note?.glissTarget === "number") {
+      legacyEntry.target = note.glissTarget;
+    }
+    out.push(legacyEntry);
+  }
 
   return out;
 }

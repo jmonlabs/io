@@ -590,3 +590,99 @@ test("at a shared tick the ramp anchor wins over the tempoMap", async () => {
   assert.equal(Math.round(tempos[0].bpm), 140, "the ramp's anchor, not the map's 90");
   assert.equal(tempos[0].time, 0);
 });
+
+// ─── articulations survive the MIDI export ─────────────────────────────────
+//
+// compilePerformanceTurn had been turning staccato into a durationScale and an
+// accent into a velocityBoost for some time, and the writer read only the
+// `pitch` ones, so both were computed and then dropped. A note exported with
+// `articulations: ["staccato"]` was byte-identical to the same note without it.
+
+const oneNote = (extra) => ({
+  tempo: 100,
+  tracks: [{ label: "L", synth: 69, notes: [{ pitch: 62, duration: 1, time: 0, velocity: 0.8, ...extra }] }],
+});
+
+/** Read an exported file back with the library's own parser. */
+function roundTrip(extra) {
+  const bytes = midiBytes(oneNote(extra));
+  const parsed = parseMidiFile(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  const track = parsed.tracks.find((t) => t.notes && t.notes.length);
+  return {
+    note: track?.notes[0],
+    bends: parsed.tracks.flatMap((t) => t.pitchBends ?? []).length,
+    cc11: (track?.controlChanges?.["11"] ?? []).length,
+    base64: midiBase64(oneNote(extra)),
+  };
+}
+
+test("a staccato is a shorter note in the exported file", () => {
+  const plain = roundTrip({});
+  const staccato = roundTrip({ articulations: ["staccato"] });
+  assert.equal(plain.note.duration, 1);
+  assert.equal(staccato.note.duration, 0.5, "durationScale 0.5, read back off the wire");
+  assert.notEqual(staccato.base64, plain.base64);
+});
+
+test("an accent is a louder note in the exported file", () => {
+  const plain = roundTrip({});
+  const accent = roundTrip({ articulations: ["accent"] });
+  assert.equal(Math.round(plain.note.velocity * 127), 102);
+  assert.equal(Math.round(accent.note.velocity * 127), 127, "velocityBoost, clamped to the byte range");
+});
+
+test("tenuto and marcato reach the file as well", () => {
+  assert.equal(roundTrip({ articulations: ["tenuto"] }).note.duration, 1.1);
+  const marcato = roundTrip({ articulations: ["marcato"] });
+  assert.equal(Math.round(marcato.note.velocity * 127), 127);
+  assert.equal(marcato.note.duration, 0.9, "marcato is both louder and shorter");
+});
+
+test("duration scales compose", () => {
+  // marcato (0.9) then staccato (0.5), so shorter than either.
+  assert.equal(roundTrip({ articulations: ["marcato", "staccato"] }).note.duration, 0.45);
+});
+
+test("crescendo becomes CC 11, and the fader is returned to rest", () => {
+  const swell = roundTrip({ articulations: [{ type: "crescendo" }] });
+  assert.ok(swell.cc11 >= 2, `expected expression events, got ${swell.cc11}`);
+  const values = swell.cc11 > 0;
+  assert.ok(values);
+});
+
+test("a note can never export as a note-on with no note-off", () => {
+  // A durationScale big enough to round to zero ticks would be a stuck key.
+  const tiny = roundTrip({ articulations: ["staccato"] });
+  assert.ok(tiny.note.duration > 0, "a staccato on a 1/64 note is still a note");
+  const shortest = midiBytes({
+    tempo: 100,
+    tracks: [{ label: "L", notes: [{ pitch: 60, duration: 0.01, time: 0, articulations: ["staccato"] }] }],
+  });
+  const parsed = parseMidiFile(shortest.buffer.slice(shortest.byteOffset, shortest.byteOffset + shortest.byteLength));
+  const n = parsed.tracks.find((t) => t.notes?.length)?.notes[0];
+  assert.ok(n && n.duration > 0, "0.005 beats still exports as a note");
+});
+
+test("the legacy single articulation is compiled, as the header promises", () => {
+  // Only the declarative array was ever read, so `articulation: "staccato"`
+  // produced nothing at all.
+  assert.equal(roundTrip({ articulation: "staccato" }).note.duration, 0.5);
+  assert.equal(
+    Math.round(roundTrip({ articulation: "accent" }).note.velocity * 127),
+    127,
+  );
+  assert.ok(
+    roundTrip({ articulation: { type: "glissando", target: 72 } }).bends > 0,
+    "a legacy glissando reaches the pitch wheel like the new spelling",
+  );
+});
+
+test("legacy glissTarget, which sat beside the articulation, is folded in", () => {
+  const viaLegacy = roundTrip({ articulation: "glissando", glissTarget: 72 });
+  const viaModern = roundTrip({ articulations: [{ type: "glissando", target: 72 }] });
+  assert.ok(viaLegacy.bends > 0, "the bare legacy form now bends");
+  assert.equal(viaLegacy.bends, viaModern.bends, "and the same as the modern spelling");
+  // an explicit target wins over glissTarget
+  const explicit = roundTrip({ articulation: "glissando", glissTarget: 60, target: 84 });
+  assert.equal(explicit.bends, viaModern.bends);
+});

@@ -52,6 +52,131 @@ function encodeTrack(events) {
     return data;
 }
 
+/**
+ * The modulations compiled for a track's notes, grouped by note index.
+ *
+ * `compilePerformanceTrack` returns `modulations` carrying an `index` into
+ * the notes it was given, so the note loop and the modulation list can be
+ * walked together.
+ *
+ * @param {Array} notes
+ * @param {number} [tempo=120]
+ * @returns {Map<number, Array>} note index -> that note's modulations
+ */
+function modulationsByNote(notes, tempo = 120) {
+  const perIndex = new Map();
+  let modulations = [];
+  try {
+    modulations = compileEvents({ notes }, { tempo }).modulations || [];
+  } catch (_) {
+    return perIndex;
+  }
+  for (const m of modulations) {
+    if (m.index === undefined) continue;
+    if (!perIndex.has(m.index)) perIndex.set(m.index, []);
+    perIndex.get(m.index).push(m);
+  }
+  return perIndex;
+}
+
+/** A duration as a finite, non-negative number of beats. */
+function toBeats(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Note length in beats, with every `durationScale` applied.
+ *
+ * Scales compose, so marcato + staccato is shorter than either. The caller
+ * floors the result at one tick: a note that rounded to zero length would be a
+ * note-on with no note-off, which a DAW plays as a stuck key.
+ *
+ * @param {Object} note
+ * @param {Array} modulations
+ * @returns {number} duration in beats
+ */
+function applyDurationScale(note, modulations) {
+  let duration = toBeats(note.duration);
+  for (const m of modulations) {
+    if (m.type !== "durationScale") continue;
+    const factor = Number(m.factor);
+    if (Number.isFinite(factor) && factor > 0) duration *= factor;
+  }
+  return duration;
+}
+
+/**
+ * Note velocity in 0..1, with every `velocityBoost` applied.
+ *
+ * @param {Object} note
+ * @param {Array} modulations
+ * @returns {number}
+ */
+function applyVelocityBoost(note, modulations) {
+  let velocity = note.velocity;
+  if (typeof velocity !== "number" || !Number.isFinite(velocity)) velocity = 0.8;
+  for (const m of modulations) {
+    if (m.type !== "velocityBoost") continue;
+    const boost = Number(m.amountBoost);
+    if (Number.isFinite(boost)) velocity += boost;
+  }
+  return Math.max(0, Math.min(1, velocity));
+}
+
+/**
+ * CC 11 (expression) for the `amplitude` modulations.
+ *
+ * Crescendo and diminuendo compile to an amplitude curve with anchors in
+ * beats. CC 11 is the channel fader a synth applies on its own; CC 7 is patch
+ * volume on most instruments, which is not what a swell means. A DAW that maps
+ * CC 11 onto a VST's expression gets the curve, and one that ignores it still
+ * plays the notes.
+ *
+ * The fader is returned to 0 at note-off, so the next note on the channel
+ * starts from its own velocity instead of inheriting the swell.
+ *
+ * @param {Array} notes
+ * @param {number} channel
+ * @param {number} ticksPerBeat
+ * @returns {Array} MIDI events
+ */
+function buildExpressionEvents(notes, channel, ticksPerBeat) {
+  const perIndex = modulationsByNote(notes);
+  const events = [];
+  for (const [index, modulations] of perIndex) {
+    const note = notes[index];
+    if (!note || note.pitch === null || note.pitch === undefined) continue;
+    const amplitude = modulations.filter((m) => m.type === "amplitude");
+    if (amplitude.length === 0) continue;
+    const start = Number(note.time) || 0;
+    const duration = toBeats(note.duration);
+    const base = Math.max(1, Math.round(applyVelocityBoost(note, modulations) * 127));
+    events.push({
+      tick: Math.round(start * ticksPerBeat),
+      sortOrder: 1,
+      bytes: [0xb0 | channel, 11, base],
+    });
+    for (const m of amplitude) {
+      for (const a of Array.isArray(m.anchors) ? m.anchors : []) {
+        const at = Math.max(start, Number(a.time) || start);
+        const value = Math.max(0, Math.min(1, Number(a.value)));
+        events.push({
+          tick: Math.round(at * ticksPerBeat),
+          sortOrder: 1,
+          bytes: [0xb0 | channel, 11, Math.max(1, Math.round(value * 127))],
+        });
+      }
+    }
+    events.push({
+      tick: Math.round((start + duration) * ticksPerBeat),
+      sortOrder: 0,
+      bytes: [0xb0 | channel, 11, 0],
+    });
+  }
+  return events;
+}
+
 function buildMidiFile(piece) {
     const bpm = piece.tempo || piece.bpm || 120;
     const ticksPerBeat = 480;
@@ -171,13 +296,32 @@ function buildMidiFile(piece) {
             return { ...note, time: t };
         });
 
-        for (const note of notesWithTime) {
+        // Staccato/tenuto and accent/marcato were compiled into modulations the
+        // writer then dropped, because the only one it read was `pitch`. Both
+        // are things MIDI says directly — a shorter note and a louder one — so
+        // they are applied to the note instead of becoming controller events.
+        const perIndex = modulationsByNote(notesWithTime, bpm);
+
+        for (let i = 0; i < notesWithTime.length; i++) {
+            const note = notesWithTime[i];
             if (note.pitch === null || note.pitch === undefined) continue; // rest
             // Accept scalar pitch or array (chord from Chain branching etc.)
             const pitches = Array.isArray(note.pitch) ? note.pitch : [note.pitch];
-            const velocity = Math.round((note.velocity || 0.8) * 127);
+            const mods = perIndex.get(i) || [];
+
+            const durationBeats = applyDurationScale(note, mods);
             const startTick = Math.round((note.time || 0) * ticksPerBeat);
-            const endTick = Math.round(((note.time || 0) + (note.duration || 1)) * ticksPerBeat);
+            // At least one tick: a note-on with no note-off is a stuck key.
+            const endTick = Math.max(
+                startTick + 1,
+                Math.round(((note.time || 0) + durationBeats) * ticksPerBeat),
+            );
+
+            // Boosts compose, and a note-on byte is 1..127.
+            const velocity = Math.max(1, Math.min(
+                127,
+                Math.round(applyVelocityBoost(note, mods) * 127),
+            ));
 
             for (const p of pitches) {
                 if (typeof p !== 'number') continue;
@@ -197,6 +341,11 @@ function buildMidiFile(piece) {
         // Pitch curves (glissando, portamento, bend, pitch envelopes) compile
         // to cents anchors; render them as MIDI pitch wheel events.
         events.push(...buildPitchBendEvents(notesWithTime, channel, ticksPerBeat));
+
+        // And the dynamics that are not pitch: CC 11, which a synth applies to
+        // itself. A term MIDI cannot say is left out rather than approximated
+        // into something that means a different thing.
+        events.push(...buildExpressionEvents(notesWithTime, channel, ticksPerBeat));
 
         trackChunks.push(encodeTrack(events));
     }
