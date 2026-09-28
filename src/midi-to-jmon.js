@@ -171,6 +171,29 @@ export class MidiToJmon {
         jmonTrack.midiChannel = track.channel;
       }
 
+      // Control changes, as the `cc` the writer reads. A Standard MIDI File
+      // carries them whether or not anyone meant them, so an import returns them
+      // all: this is how someone else's file gets its controllers back, and
+      // dropping a whole message class here loses it with nothing to report it.
+      //
+      // Note the consequence: a file whose CC 11 was written from an `amplitude`
+      // modulation comes back with an explicit `cc` entry for it, because the
+      // file cannot say which CC 11s were meant and which were derived. The
+      // round trip is truthful about the bytes and lossy about the intent.
+      if (track.controlChanges) {
+        const cc = Object.entries(track.controlChanges)
+          .flatMap(([controller, steps]) =>
+            (Array.isArray(steps) ? steps : []).map((step) => ({
+              controller: step.number ?? Number(controller),
+              value: step.value,
+              time: step.time ?? 0,
+            })),
+          )
+          .filter((c) => Number.isFinite(c.controller) && Number.isFinite(c.value))
+          .sort((a, b) => a.time - b.time || a.controller - b.controller);
+        if (cc.length) jmonTrack.cc = cc;
+      }
+
       // Add instrument information if available
       if (track.instrument) {
         jmonTrack.synth = {

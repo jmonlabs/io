@@ -178,6 +178,55 @@ function buildExpressionEvents(notes, channel, ticksPerBeat) {
   return events;
 }
 
+/**
+ * Render a track's control changes as MIDI controller events.
+ *
+ * `cc` is a list of steps, not spans. A controller is told a value and holds it
+ * until told otherwise, so there is no duration to write and nothing to release —
+ * the same reason a program change is an instant.
+ *
+ * `value` is 0..1, the same range as `velocity`, so a fader position reads
+ * identically in a piece and in a plugin. `channel` overrides the track's, which
+ * matters under MPE where the track's channel is the master zone and the notes go
+ * to member channels.
+ *
+ * An entry with no usable controller or value is skipped rather than written as
+ * silence: a file that quietly omits a sweep reads as an instrument with no
+ * movement, which is worse than a missing one.
+ *
+ * @param {Array<Object>} controls
+ * @param {number} channel
+ * @param {number} ticksPerBeat
+ * @returns {Array<{tick:number, sortOrder:number, bytes:number[]}>}
+ */
+function buildControlEvents(controls, channel, ticksPerBeat) {
+  const events = [];
+  for (const c of Array.isArray(controls) ? controls : []) {
+    if (!c || typeof c !== "object") continue;
+    const controller = Number(c.controller ?? c.cc);
+    const value = Number(c.value);
+    if (!Number.isFinite(controller) || !Number.isFinite(value)) continue;
+    // Clamped, not masked: a channel past 15 masked with 0x0f wraps to a low
+    // channel, which is a control change arriving somewhere nobody asked for.
+    // Clamping lands on the last channel instead, which is at least adjacent.
+    const ch = Number.isFinite(Number(c.channel))
+      ? Math.max(0, Math.min(15, Number(c.channel) | 0))
+      : channel;
+    const tick = Math.round(toBeats(c.time) * ticksPerBeat);
+    events.push({
+      tick,
+      // Before a note-on on the same tick, so the patch is already set.
+      sortOrder: -1,
+      bytes: [
+        0xb0 | ch,
+        controller & 0x7f,
+        Math.max(0, Math.min(127, Math.round(value * 127))),
+      ],
+    });
+  }
+  return events;
+}
+
 function buildMidiFile(piece, options = {}) {
     const bpm = piece.tempo || piece.bpm || 120;
     const ticksPerBeat = 480;
@@ -308,6 +357,11 @@ function buildMidiFile(piece, options = {}) {
         // are things MIDI says directly — a shorter note and a louder one — so
         // they are applied to the note instead of becoming controller events.
         const perIndex = modulationsByNote(notesWithTime, bpm);
+
+        // Control changes first, and before the MPE branch, so they are written
+        // on whichever channel governs the track: its own, or the MPE master
+        // zone that the notes are spread across.
+        events.push(...buildControlEvents(track.cc, channel, ticksPerBeat));
 
         if (mpe) {
             // One channel per note, so `microtuning` — a per-note offset with

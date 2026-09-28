@@ -48,7 +48,7 @@ const EXPORTERS = {
     ]),
     trackFields: new Set([
       "label", "name", "notes", "events", "synth", "instrument",
-      "channel", "midiChannel", "output", "gain", "pan",
+      "channel", "midiChannel", "output", "gain", "pan", "cc",
     ]),
     pieceFields: new Set(["title", "tempo", "bpm", "keySignature", "timeSignature", "tracks"]),
     fieldNotes: {
@@ -119,6 +119,10 @@ const EXPORTERS = {
         why: "a pitch envelope is a curve with a shape; <glissando> and <slide> are a straight line between two notes, and cannot hold it",
       },
       channel: { kind: "format", why: "a score has no channel" },
+      cc: {
+        kind: "format",
+        why: "MusicXML has <technical>, which holds instrument-specific words, and nowhere to put a controller number; a score says dynamics and articulations, not CC",
+      },
       // Decided by the value, not the key, so it is checked separately below: a
       // program number is written as <midi-program>, a sampler name cannot be.
       synth: {
