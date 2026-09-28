@@ -55,6 +55,9 @@ export {
 
 export { deriveVisualFromArticulations } from "./format/notation.js";
 
+// What the MIDI export will not carry, declared beside the writer that drops it.
+export { midiLosses, MIDI_RENDERED_MODULATIONS } from "./midi-losses.js";
+
 export { JmonValidator } from "./format/validate.js";
 
 import * as midiModule from "./midi.js";
@@ -65,6 +68,7 @@ import * as timeline from "./format/timeline.js";
 import * as performance from "./format/performance.js";
 import { JmonValidator } from "./format/validate.js";
 import { deriveVisualFromArticulations } from "./format/notation.js";
+import { midiLosses } from "./midi-losses.js";
 
 export const VERSION = "1.0.0";
 
@@ -100,8 +104,46 @@ export const io = {
     JmonValidator,
   },
 
-  validate(piece) {
-    return new JmonValidator().validateAndNormalize(piece);
+  /**
+   * Is this a valid piece, and — for a named target — what will not survive
+   * the trip?
+   *
+   *     io.validate(piece)                    // { valid, errors, normalized }
+   *     io.validate(piece, { for: "midi" })   // …plus `warnings`
+   *
+   * The warnings are not errors. They are the fields the writer cannot express,
+   * and the writer does not say so: a `microtuning` or a `loop` used to arrive
+   * in the DAW doing nothing, with no error anywhere. Pass the target you are
+   * exporting for and find out first.
+   *
+   * @param {Object} piece
+   * @param {Object} [options]
+   * @param {"midi"} [options.for] - The export target to check against
+   * @returns {{valid:boolean, errors:string[], normalized:Object|null, warnings?:Array}}
+   */
+  /**
+   * Is this a valid piece, and — for a named target — what will not survive
+   * the trip?
+   *
+   *     io.validate(piece)                    // { valid, errors, normalized }
+   *     io.validate(piece, { for: "midi" })   // …plus `warnings`
+   *
+   * The warnings are not errors. They are the fields the writer cannot express,
+   * and the writer does not say so: a `microtuning` or a `loop` used to arrive
+   * in the DAW doing nothing, with no error anywhere. Pass the target you are
+   * exporting for and find out first.
+   *
+   * @param {Object} piece
+   * @param {Object} [options]
+   * @param {"midi"} [options.for] - The export target to check against
+   * @returns {{valid:boolean, errors:string[], normalized:Object|null, warnings?:Array}}
+   */
+  validate(piece, options = {}) {
+    const result = new JmonValidator().validateAndNormalize(piece);
+    if (options.for === "midi") {
+      result.warnings = midiLosses(piece);
+    }
+    return result;
   },
 };
 

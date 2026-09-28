@@ -686,3 +686,75 @@ test("legacy glissTarget, which sat beside the articulation, is folded in", () =
   const explicit = roundTrip({ articulation: "glissando", glissTarget: 60, target: 84 });
   assert.equal(explicit.bends, viaModern.bends);
 });
+
+// ─── telling the caller what MIDI will not carry ────────────────────────────
+//
+// Every one of these used to arrive in the DAW doing nothing, with no error
+// anywhere: the writer has no way to say a field cannot be written. The check
+// lives beside the writer, so the two cannot drift.
+
+import { midiLosses, MIDI_RENDERED_MODULATIONS } from "../src/midi-losses.js";
+
+const lossFields = (piece) => midiLosses(piece).map((w) => w.field);
+const aNote = (extra) => ({ pitch: 62, duration: 1, time: 0, velocity: 0.8, ...extra });
+const aPiece = (notes, trackExtra = {}, pieceExtra = {}) => ({
+  tempo: 100,
+  tracks: [{ label: "L", synth: 69, notes, ...trackExtra }],
+  ...pieceExtra,
+});
+
+test("a piece that survives the export is not warned about", () => {
+  assert.deepEqual(lossFields(aPiece([aNote({})])), []);
+  assert.deepEqual(lossFields(aPiece([aNote({ articulations: ["staccato"] })])), [],
+    "staccato is a shorter note and is written");
+  assert.deepEqual(lossFields(aPiece([aNote({ articulations: [{ type: "glissando", target: 72 }] })])), [],
+    "and a glissando is a pitch curve");
+  assert.deepEqual(lossFields(aPiece([aNote({ pitchEnvelope: [0, 2] })])), [], "as is a pitch envelope");
+});
+
+test("the fields MIDI cannot express are named", () => {
+  assert.ok(lossFields(aPiece([aNote({ microtuning: 0.25 })])).includes("microtuning"));
+  assert.ok(lossFields(aPiece([aNote({ channel: 3 })])).includes("channel"),
+    "per-note channel; track.channel is read, note.channel is not");
+  assert.ok(lossFields(aPiece([aNote({})], { loop: true })).includes("loop"),
+    "a Standard MIDI File cannot loop");
+  assert.ok(lossFields(aPiece([aNote({})], { synth: "drumkit:acoustic" })).includes("synth"),
+    "a sampler name is not a program change");
+  assert.ok(lossFields(aPiece([aNote({})], {}, { audioGraph: [{ type: "Reverb" }] })).includes("audioGraph"),
+    "MIDI has no send bus");
+  assert.ok(lossFields(aPiece([aNote({ modulations: [] })])).includes("modulations"),
+    "modulations on a note are not read; articulations are");
+  assert.ok(lossFields(aPiece([aNote({ wobble: 1 })])).includes("wobble"),
+    "an unknown field is better reported than ignored");
+});
+
+test("vibrato is reported, because it compiles to a rate and not a curve", () => {
+  // The clearest case of the whole file: the format layer handles it, and the
+  // result is a `pitch` modulation with no anchors, which the wheel writer
+  // needs in order to draw anything. Nothing throws. It just does not arrive.
+  const warnings = lossFields(aPiece([aNote({ articulations: [{ type: "vibrato", rate: 5, depth: 40 }] })]));
+  assert.ok(warnings.some((f) => f.includes("vibrato")), `expected a vibrato warning, got ${warnings}`);
+});
+
+test("the loss list names every modulation type the writer renders", () => {
+  // So that adding a type to the format layer without teaching the writer
+  // about it shows up here rather than vanishing on export.
+  assert.deepEqual(Object.keys(MIDI_RENDERED_MODULATIONS).sort(), ["amplitude", "durationScale", "pitch", "velocityBoost"]);
+});
+
+test("warnings are per loss, not per note, and carry a reason", () => {
+  const notes = [aNote({ microtuning: 0.1 }), aNote({ microtuning: 0.2 }), aNote({ microtuning: 0.3 })];
+  const losses = midiLosses(aPiece(notes));
+  assert.equal(losses.length, 1, "three notes, one field, one warning");
+  assert.ok(losses[0].why.length > 20, "and an explanation, since the point is to act on it");
+});
+
+test("validate takes the target, and only then reports warnings", async () => {
+  const { default: io } = await import("../src/index.js");
+  const piece = aPiece([aNote({ microtuning: 0.25 })]);
+  assert.ok(!("warnings" in io.validate(piece)), "the default is unchanged: no key at all");
+  const forMidi = io.validate(piece, { for: "midi" });
+  assert.equal(forMidi.valid, true, "losing a field is not an invalid piece");
+  assert.equal(forMidi.warnings.length, 1);
+  assert.equal(forMidi.normalized !== null, true, "normalisation is unaffected");
+});
