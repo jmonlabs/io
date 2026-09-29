@@ -69,10 +69,6 @@ const EXPORTERS = {
         kind: "writer",
         why: "the writer takes the channel from the track (track.channel), not the note",
       },
-      modulations: {
-        kind: "writer",
-        why: "modulations on a note are not read; use articulations or pitchEnvelope",
-      },
       // A program number is written; a sampler name is not. This one is decided
       // by the value rather than by the key, so it is checked separately below.
       synth: {

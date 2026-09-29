@@ -118,17 +118,19 @@ export function readBeatsPerBar(piece = {}) {
 /**
  * Flatten the automation model into one list of channels.
  *
- * JMON describes automation three ways — `automation.global`, per-track
- * `automation.tracks[id]`, and the deprecated flat `automation.events`. They
- * all reduce to the same thing: a target, and points over time.
+ * JMON describes automation four ways — `automation.global`, per-track
+ * `automation.tracks[id]`, a track's own `automation` list, and the
+ * deprecated flat `automation.events`. They all reduce to the same thing: a
+ * target, and points over time.
  *
  * @param {Object} piece - JMON piece
  * @returns {Array<{id, target, scope, trackId, points: Array<{time, value}>}>}
- *   Empty when automation is absent or disabled
+ *   Empty when automation is absent or disabled. A track's own lanes carry
+ *   its label as `trackId`, or its index when it has none.
  */
 export function automationChannels(piece = {}) {
-  const automation = piece.automation;
-  if (!automation || automation.enabled === false) return [];
+  const automation = piece.automation ?? {};
+  if (automation.enabled === false) return [];
 
   const beatsPerBar = readBeatsPerBar(piece);
   const channels = [];
@@ -157,6 +159,13 @@ export function automationChannels(piece = {}) {
   for (const [trackId, list] of Object.entries(automation.tracks || {})) {
     for (const channel of list || []) push(channel, "track", trackId);
   }
+
+  // The schema also lets a track carry its own lanes.
+  (piece.tracks || []).forEach((track, index) => {
+    for (const channel of Array.isArray(track?.automation) ? track.automation : []) {
+      push(channel, "track", track.label ?? index);
+    }
+  });
 
   // The deprecated flat form: one event per point, grouped by target.
   if (Array.isArray(automation.events) && automation.events.length > 0) {

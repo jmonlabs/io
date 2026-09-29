@@ -46,6 +46,8 @@ export {
   KEY_NAMES_MINOR,
 } from "./format/timeline.js";
 
+export { controllerEvents, noteRelativeBeats } from "./format/controllers.js";
+
 export {
   compilePerformance,
   compilePerformanceTrack,
@@ -69,6 +71,7 @@ import { midiToJmon, MidiToJmon } from "./midi-to-jmon.js";
 import * as musicxmlModule from "./musicxml.js";
 import * as timeline from "./format/timeline.js";
 import * as performance from "./format/performance.js";
+import * as controllers from "./format/controllers.js";
 import { JmonValidator } from "./format/validate.js";
 import { deriveVisualFromArticulations } from "./format/notation.js";
 import { exportLosses } from "./export-losses.js";
@@ -99,6 +102,7 @@ export const io = {
   // to read a piece without depending on this package by URL.
   format: {
     ...timeline,
+    ...controllers,
     compilePerformance: performance.compilePerformance,
     compilePerformanceTrack: performance.compilePerformanceTrack,
     compileEvents: performance.compilePerformanceTrack,
