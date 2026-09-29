@@ -128,14 +128,24 @@ function applyVelocityBoost(note, modulations) {
 /**
  * CC 11 (expression) for the `amplitude` modulations.
  *
- * Crescendo and diminuendo compile to an amplitude curve with anchors in
- * beats. CC 11 is the channel fader a synth applies on its own; CC 7 is patch
+ * CC 11 is the channel's expression fader: a proportion of the channel volume
+ * that a synth applies to itself, on top of each note's velocity. CC 7 is patch
  * volume on most instruments, which is not what a swell means. A DAW that maps
  * CC 11 onto a VST's expression gets the curve, and one that ignores it still
  * plays the notes.
  *
- * The fader is returned to 0 at note-off, so the next note on the channel
- * starts from its own velocity instead of inheriting the swell.
+ * An amplitude envelope is already a proportion of the note's velocity, so it
+ * maps straight onto the fader, sampled every 1/32 beat between its anchors: a
+ * synth jumps from one controller value to the next, so anchors alone would be
+ * steps. Other amplitude modulations (crescendo, diminuendo) set the fader to
+ * the note's level at its onset.
+ *
+ * The fader is one per channel, so notes that touch or overlap share it. A
+ * note's curve stops where the next note on the channel begins, which takes
+ * the fader over; and a note gives the fader back at rest (127) when it ends
+ * only if nothing else is sounding then, so that the note already playing is
+ * not silenced. A note with no amplitude modulation on a channel that has some
+ * starts at rest, rather than inheriting its neighbour's swell.
  *
  * @param {Array} notes
  * @param {number} channel
@@ -145,35 +155,50 @@ function applyVelocityBoost(note, modulations) {
 function buildExpressionEvents(notes, channel, ticksPerBeat) {
   const perIndex = modulationsByNote(notes);
   const events = [];
-  for (const [index, modulations] of perIndex) {
-    const note = notes[index];
-    if (!note || note.pitch === null || note.pitch === undefined) continue;
-    const amplitude = modulations.filter((m) => m.type === "amplitude");
-    if (amplitude.length === 0) continue;
-    const start = Number(note.time) || 0;
-    const duration = toBeats(note.duration);
-    const base = Math.max(1, Math.round(applyVelocityBoost(note, modulations) * 127));
-    events.push({
-      tick: Math.round(start * ticksPerBeat),
-      sortOrder: 1,
-      bytes: [0xb0 | channel, 11, base],
-    });
-    for (const m of amplitude) {
-      for (const a of Array.isArray(m.anchors) ? m.anchors : []) {
-        const at = Math.max(start, Number(a.time) || start);
-        const value = Math.max(0, Math.min(1, Number(a.value)));
-        events.push({
-          tick: Math.round(at * ticksPerBeat),
-          sortOrder: 1,
-          bytes: [0xb0 | channel, 11, Math.max(1, Math.round(value * 127))],
-        });
+  const cc = (beat, value) => events.push({
+    tick: Math.round(beat * ticksPerBeat),
+    sortOrder: 0.5, // after the note-offs of that tick, before its note-ons
+    bytes: [0xb0 | channel, 11, Math.max(0, Math.min(127, Math.round(value)))],
+  });
+
+  const spans = notes
+    .map((note, index) => ({ index, start: Number(note.time) || 0, end: (Number(note.time) || 0) + toBeats(note.duration) }))
+    .filter(({ index }) => notes[index].pitch !== null && notes[index].pitch !== undefined);
+  const amplitudeOf = (index) => (perIndex.get(index) || []).filter((m) => m.type === "amplitude");
+  if (!spans.some(({ index }) => amplitudeOf(index).length > 0)) return events;
+
+  for (const { index, start, end } of spans) {
+    const amplitude = amplitudeOf(index);
+    const envelope = amplitude.find((m) => Array.isArray(m.anchors) && m.anchors.length > 0);
+    // The next note on the channel takes the fader over from its onset.
+    const next = Math.min(end, ...spans.filter((o) => o.start > start && o.start < end).map((o) => o.start));
+
+    if (envelope) {
+      const anchors = envelope.anchors.map((a) => ({ time: Number(a.time), value: Math.max(0, Math.min(1, Number(a.value))) }));
+      const levelAt = (t) => {
+        if (t <= anchors[0].time) return anchors[0].value;
+        for (let k = 1; k < anchors.length; k++) {
+          const a = anchors[k - 1];
+          const b = anchors[k];
+          if (t <= b.time) return a.value + (b.value - a.value) * ((t - a.time) / (b.time - a.time || 1));
+        }
+        return anchors.at(-1).value;
+      };
+      let last = -1;
+      for (let t = start; t < next; t += 1 / 32) {
+        const value = Math.round(levelAt(t) * 127);
+        if (value !== last) cc(t, value);
+        last = value;
       }
+    } else if (amplitude.length > 0) {
+      cc(start, applyVelocityBoost(notes[index], perIndex.get(index) || []) * 127);
+    } else {
+      cc(start, 127);
     }
-    events.push({
-      tick: Math.round((start + duration) * ticksPerBeat),
-      sortOrder: 0,
-      bytes: [0xb0 | channel, 11, 0],
-    });
+
+    // Back at rest when the note ends, unless another note is still sounding.
+    const busy = spans.some((o) => o.index !== index && o.start < end && o.end > end);
+    if (!busy && next === end) cc(end, 127);
   }
   return events;
 }
@@ -343,6 +368,16 @@ function buildMidiFile(piece, options = {}) {
         }
 
         const channel = resolveChannel(track);
+
+        // The instrument, when the track names a General MIDI program: a
+        // number, { gm } or { program }. A drum channel has no program, and a
+        // sampler name is not one (see export-losses).
+        const program = typeof track.synth === "number" ? track.synth
+            : (typeof track.synth?.gm === "number" ? track.synth.gm
+                : (typeof track.synth?.program === "number" ? track.synth.program : null));
+        if (program !== null && channel !== 9 && program >= 0 && program <= 127) {
+            events.push({ tick: 0, sortOrder: -1, bytes: [0xc0 | channel, Math.round(program)] });
+        }
 
         // Add time to notes if missing
         let currentTime = 0;

@@ -651,10 +651,51 @@ test("crescendo becomes CC 11, and the fader is returned to rest", () => {
   assert.ok(values);
 });
 
-test("an amplitude envelope becomes a CC 11 curve", () => {
-  // The onset level, one event per anchor, and the fader back to rest.
-  const bowed = roundTrip({ amplitudeEnvelope: [0.2, 1, 0.6] });
-  assert.equal(bowed.cc11, 5);
+/** The CC 11 values of an exported piece, in beats, read back with the library's parser. */
+function expressionOf(piece) {
+  const bytes = midiBytes(piece);
+  const parsed = parseMidiFile(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  const track = parsed.tracks.find((t) => t.notes && t.notes.length);
+  return { cc: (track?.controlChanges?.["11"] ?? []).map((e) => ({ time: e.time, value: Math.round(e.value * 127) })), track };
+}
+
+test("an amplitude envelope becomes a smooth CC 11 curve, as a proportion of the velocity", () => {
+  // The fader is a proportion of the channel's volume, the note-on keeps the
+  // velocity. Only the anchors were written, as steps, and the curve started
+  // from the velocity (0.8 -> 102) on another scale than its anchors.
+  const { cc } = expressionOf(oneNote({ amplitudeEnvelope: [0.2, 1, 0.6] }));
+  assert.equal(cc[0].value, 25, "the curve starts at its first anchor, 0.2 of full");
+  assert.ok(cc.length > 20, `a ramp, not three steps (${cc.length} events)`);
+  assert.ok(cc.some((e) => e.value === 127), "it reaches the peak");
+  for (let k = 1; k < cc.length - 1; k++) {
+    assert.ok(Math.abs(cc[k].value - cc[k - 1].value) <= 16, `no jump at ${cc[k].time}`);
+  }
+  assert.deepEqual(cc.at(-1), { time: 1, value: 127 }, "and the fader is back at rest, not at 0, when the note ends");
+});
+
+test("a note that starts before its neighbour ends is not silenced by it", () => {
+  // Every note-off set the channel's fader to 0, so a note already playing —
+  // legato strings, humanized timing — went silent.
+  const piece = {
+    tempo: 60,
+    tracks: [{ label: "V", synth: 40, notes: [
+      { pitch: 69, duration: 2, time: 0, velocity: 0.6, amplitudeEnvelope: [0.5, 1] },
+      { pitch: 71, duration: 2, time: 1.95, velocity: 0.6, amplitudeEnvelope: [0.8, 1] },
+    ] }],
+  };
+  const { cc } = expressionOf(piece);
+  assert.ok(cc.every((e) => e.value > 0), "the fader never falls to 0");
+  const during = cc.filter((e) => e.time >= 1.95 && e.time < 2.1);
+  assert.equal(during[0].value, 102, "the second note takes the fader over at its onset");
+  assert.ok(!cc.some((e) => e.time === 2 && e.value === 127), "and the first note's end does not reset it");
+});
+
+test("a track's General MIDI program is written, so the file opens on the right instrument", () => {
+  const program = (synth) => expressionOf({ tempo: 60, tracks: [{ label: "V", synth, notes: [{ pitch: 60, duration: 1, time: 0 }] }] }).track.instrument.number;
+  assert.equal(program(40), 40);
+  assert.equal(program({ gm: 42, bank: "MusyngKite" }), 42);
+  assert.equal(program({ program: 48 }), 48);
+  assert.equal(program({ type: "Sampler", options: {} }), 0, "a sampler has no program: the file says nothing");
 });
 
 test("a note can never export as a note-on with no note-off", () => {
