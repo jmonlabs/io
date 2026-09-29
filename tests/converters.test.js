@@ -690,6 +690,21 @@ test("a note that starts before its neighbour ends is not silenced by it", () =>
   assert.ok(!cc.some((e) => e.time === 2 && e.value === 127), "and the first note's end does not reset it");
 });
 
+test("a curve that rises from silence starts at its first level, on a shared fader", () => {
+  // bow() starts each note at 0. On one channel's fader that muted the end of
+  // the previous note at every onset; the synth gives the note its attack.
+  const piece = {
+    tempo: 60,
+    tracks: [{ label: "V", synth: 40, notes: [
+      { pitch: 69, duration: 2, time: 0, velocity: 0.6, amplitudeEnvelope: [{ time: 0, value: 0 }, { time: 0.3, value: 0.75 }, { time: 1, value: 1 }, { time: 2, value: 0.8 }] },
+      { pitch: 71, duration: 2, time: 2, velocity: 0.6, amplitudeEnvelope: [{ time: 0, value: 0 }, { time: 0.3, value: 0.75 }, { time: 1, value: 1 }, { time: 2, value: 0.8 }] },
+    ] }],
+  };
+  const { cc } = expressionOf(piece);
+  assert.ok(Math.min(...cc.map((e) => e.value)) >= 95, `the fader never dips below the curve's first level (${Math.min(...cc.map((e) => e.value))})`);
+  assert.equal(cc.find((e) => e.time === 2).value, 95, "the second note starts at 0.75 of full");
+});
+
 test("a track's General MIDI program is written, so the file opens on the right instrument", () => {
   const program = (synth) => expressionOf({ tempo: 60, tracks: [{ label: "V", synth, notes: [{ pitch: 60, duration: 1, time: 0 }] }] }).track.instrument.number;
   assert.equal(program(40), 40);

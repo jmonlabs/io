@@ -137,7 +137,8 @@ function applyVelocityBoost(note, modulations) {
  * An amplitude envelope is already a proportion of the note's velocity, so it
  * maps straight onto the fader, sampled every 1/32 beat between its anchors: a
  * synth jumps from one controller value to the next, so anchors alone would be
- * steps. Other amplitude modulations (crescendo, diminuendo) set the fader to
+ * steps. A rise from silence at the start is left to the instrument's own
+ * attack (see below). Other amplitude modulations (crescendo, diminuendo) set the fader to
  * the note's level at its onset.
  *
  * The fader is one per channel, so notes that touch or overlap share it. A
@@ -174,7 +175,14 @@ function buildExpressionEvents(notes, channel, ticksPerBeat) {
     const next = Math.min(end, ...spans.filter((o) => o.start > start && o.start < end).map((o) => o.start));
 
     if (envelope) {
-      const anchors = envelope.anchors.map((a) => ({ time: Number(a.time), value: Math.max(0, Math.min(1, Number(a.value))) }));
+      let anchors = envelope.anchors.map((a) => ({ time: Number(a.time), value: Math.max(0, Math.min(1, Number(a.value))) }));
+      // A curve that rises from silence is the note's attack, which the synth's
+      // instrument already gives it. On a shared fader it would also mute the
+      // end of the note before, so the curve holds its first level from the
+      // onset instead.
+      if (anchors.length > 1 && anchors[0].value === 0) {
+        anchors = [{ time: start, value: anchors[1].value }, ...anchors.slice(1)];
+      }
       const levelAt = (t) => {
         if (t <= anchors[0].time) return anchors[0].value;
         for (let k = 1; k < anchors.length; k++) {
@@ -196,8 +204,9 @@ function buildExpressionEvents(notes, channel, ticksPerBeat) {
       cc(start, 127);
     }
 
-    // Back at rest when the note ends, unless another note is still sounding.
-    const busy = spans.some((o) => o.index !== index && o.start < end && o.end > end);
+    // Back at rest when the note ends, unless another note is still sounding
+    // or starts right then (it sets the fader itself).
+    const busy = spans.some((o) => o.index !== index && o.start <= end && o.end > end);
     if (!busy && next === end) cc(end, 127);
   }
   return events;
