@@ -33,12 +33,17 @@
  * @property {string=} articulation - Legacy single articulation
  * @property {number=} glissTarget - Legacy target pitch for glissando/portamento
  * @property {number=} velocity - Optional velocity (0..1)
- * @property {Array<number|{time:number,value:number,curve?:string}>=} pitchEnvelope -
- *   Pitch envelope as semitone offsets relative to the written pitch. Either an
- *   array of numbers spread evenly across the note duration (SCAMP-style, e.g.
- *   [0, 1] bends up one semitone), or anchor objects with `time` in beats
- *   relative to note start and `value` in semitones.
- * @property {Array<number|{time:number,value:number}>=} amplitudeEnvelope -
+ * @property {number=} tuning - The note's tuning: a fixed offset from `pitch`
+ *   in semitones. The note sounds at `pitch + tuning`; a `bend` is relative to
+ *   that. (Was `microtuning`, still read.)
+ * @property {Array<number|{time:number,value:number,curve?:string}>=} bend -
+ *   What the pitch does over the note, in semitones relative to `pitch +
+ *   tuning`. Either an array of numbers spread evenly across the note duration
+ *   (SCAMP-style, e.g. [0, 1] rises one semitone), or anchor objects with
+ *   `time` in beats relative to note start and `value` in semitones. The
+ *   glissando, portamento and bend articulations compile to the same curve;
+ *   when a note has both, this field wins. (Was `pitchEnvelope`, still read.)
+ * @property {Array<number|{time:number,value:number}>=} dynamics -
  *   Loudness across the note, as a multiple of its velocity (1 = the velocity,
  *   0 = silence). Either numbers spread evenly across the duration
  *   ([0, 1, 0.7] swells in and eases off), or anchor objects with `time` in
@@ -115,10 +120,12 @@ export function compilePerformanceTrack(track, options = {}) {
     const dur = toNumber(n.duration, 0);
     const end = onset + Math.max(0, dur);
 
-    // Pitch envelope: second frontend to the same pitch-curve backend as
-    // glissando/portamento/bend articulations. Compiles to cents anchors.
-    if (!isRest && n.pitchEnvelope != null) {
-      const envAnchors = normalizePitchEnvelope(n.pitchEnvelope, dur);
+    // The bend: what the pitch does over the note, as cents anchors. The
+    // glissando, portamento and bend articulations compile to the same curve,
+    // and are skipped when the note says it directly.
+    const bend = n.bend ?? n.pitchEnvelope;
+    if (!isRest && bend != null) {
+      const envAnchors = normalizePitchEnvelope(bend, dur);
       if (envAnchors) {
         modulations.push({
           type: "pitch",
@@ -132,11 +139,12 @@ export function compilePerformanceTrack(track, options = {}) {
       }
     }
 
-    // Amplitude envelope: loudness inside the note, as a multiple of its
-    // velocity. Compiles to anchors like the pitch envelope, so players and
-    // exporters read one representation.
-    if (!isRest && n.amplitudeEnvelope != null) {
-      const envAnchors = normalizeAmplitudeEnvelope(n.amplitudeEnvelope, dur);
+    // The dynamics: loudness inside the note, as a multiple of its velocity.
+    // Compiles to anchors like the bend, so players and exporters read one
+    // representation.
+    const dynamics = n.dynamics ?? n.amplitudeEnvelope;
+    if (!isRest && dynamics != null) {
+      const envAnchors = normalizeAmplitudeEnvelope(dynamics, dur);
       if (envAnchors) {
         modulations.push({
           type: "amplitude",
@@ -213,7 +221,7 @@ export function compilePerformanceTrack(track, options = {}) {
         // Complex articulations: curves / continuous modulations
         case "glissando":
         case "portamento": {
-          if (isRest) break;
+          if (isRest || bend != null) break;
           const fromPitch = toMainPitch(n.pitch);
           // Accept both 'target' (standard) and 'to' (common mistake) for compatibility
           const toPitch = typeof art.target === "number" ? art.target
@@ -240,7 +248,7 @@ export function compilePerformanceTrack(track, options = {}) {
 
         case "bend": {
           const amount = toNumber(art.amount, undefined);
-          if (amount === undefined) break;
+          if (amount === undefined || bend != null) break;
           // Fast attack to the bent pitch (~30% of the note, capped at half
           // a beat), then hold — or return to the written pitch by note end.
           const rampBeats = Math.min(0.5, dur * 0.3);
@@ -386,7 +394,7 @@ function normalizeArticulations(note) {
 }
 
 /**
- * Normalize a note's pitchEnvelope to anchors relative to the note start:
+ * Normalize a note's bend to anchors relative to the note start:
  * [{ time: beats from note start, value: cents offset from written pitch }].
  *
  * Accepts:
@@ -434,7 +442,7 @@ function normalizePitchEnvelope(envelope, dur) {
 }
 
 /**
- * Normalize a note's amplitudeEnvelope to anchors relative to the note start:
+ * Normalize a note's dynamics to anchors relative to the note start:
  * [{ time: beats from note start, value: multiple of the note's velocity }].
  *
  * Accepts the same two shapes as a pitch envelope: numbers spread evenly

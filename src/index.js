@@ -119,9 +119,11 @@ export const io = {
    *     io.validate(piece, { for: "midi" })   // …plus `warnings`
    *
    * The warnings are not errors. They are the fields the writer cannot express,
-   * and the writer does not say so: a `microtuning` or a `loop` used to arrive
-   * in the DAW doing nothing, with no error anywhere. Pass the target you are
-   * exporting for and find out first.
+   * and the writer does not say so: a `loop` used to arrive in the DAW doing
+   * nothing, with no error anywhere. Pass the target you are exporting for and
+   * find out first. A note field under its old name (`microtuning`,
+   * `pitchEnvelope`, `amplitudeEnvelope`) is renamed in `normalized`, and
+   * that is a warning too, whatever the target.
    *
    * @param {Object} piece
    * @param {Object} [options]
@@ -139,9 +141,11 @@ export const io = {
    *     io.validate(piece, { for: "midi" })   // …plus `warnings`
    *
    * The warnings are not errors. They are the fields the writer cannot express,
-   * and the writer does not say so: a `microtuning` or a `loop` used to arrive
-   * in the DAW doing nothing, with no error anywhere. Pass the target you are
-   * exporting for and find out first.
+   * and the writer does not say so: a `loop` used to arrive in the DAW doing
+   * nothing, with no error anywhere. Pass the target you are exporting for and
+   * find out first. A note field under its old name (`microtuning`,
+   * `pitchEnvelope`, `amplitudeEnvelope`) is renamed in `normalized`, and
+   * that is a warning too, whatever the target.
    *
    * @param {Object} piece
    * @param {Object} [options]
@@ -151,7 +155,7 @@ export const io = {
   validate(piece, options = {}) {
     const result = new JmonValidator().validateAndNormalize(piece);
     if (options.for) {
-      result.warnings = exportLosses(piece, options.for);
+      result.warnings = [...(result.warnings ?? []), ...exportLosses(piece, options.for)];
     }
     return result;
   },

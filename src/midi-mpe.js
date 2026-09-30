@@ -1,10 +1,11 @@
-// MPE: one channel per note, so a note can carry its own pitch bend.
+// MPE: one channel per note, so a note can carry its own pitch wheel.
 //
-// `microtuning` is a per-note offset in semitones, and a Standard MIDI File has
-// no message for it. A channel's pitch wheel moves every note on that channel,
-// so in polyphony the only correct answer is a channel per note — which is what
-// MPE is: a zone of member channels, one per note, with the master channel
-// configuring the zone.
+// A note's `tuning` is an offset in semitones, and a Standard MIDI File has no
+// message for it: only the wheel, which moves every note on its channel. So in
+// polyphony the only correct answer is a channel per note — which is what MPE
+// is: a zone of member channels, one per note, with the master channel
+// configuring the zone. The wheel moves themselves are drawn by pitch-wheel.js,
+// once each note has its channel.
 //
 // The cost is channels, and the limit is hard. If more notes sound at once than
 // there are member channels, this throws rather than quietly putting two notes
@@ -21,21 +22,8 @@ export const MPE_DEFAULTS = {
   bendRange: 48,
 };
 
-/** Centre of a 14-bit pitch bend, which is zero semitones. */
-const BEND_CENTRE = 8192;
-
-/**
- * The 14-bit pitch bend value for an offset in cents, within a sensitivity.
- *
- * @param {number} cents
- * @param {number} rangeSemitones
- * @returns {number} 0..16383, 8192 at zero
- */
-export function bendValueFor(cents, rangeSemitones) {
-  const span = Math.max(0.01, rangeSemitones) * 100;
-  const v = BEND_CENTRE + Math.round((cents / span) * (BEND_CENTRE - 1));
-  return Math.max(0, Math.min(16383, v));
-}
+/** The 14-bit wheel value for an offset in cents, within a sensitivity: see pitch-wheel.js. */
+export { wheelValue as bendValueFor } from "./pitch-wheel.js";
 
 /**
  * Assign a channel to every note, and say which channel each gets.
@@ -98,14 +86,14 @@ export function assignMpeChannels(notes, options = {}) {
 }
 
 /**
- * The note-on/off and bend events for one track, one channel per note.
- *
- * The bend is set before the note sounds and returned to centre when it stops,
- * so the next note to take that channel starts centred.
+ * The note-on/off events for one track, one channel per note, and the bend
+ * sensitivity of each channel used. The wheel moves themselves come from
+ * pitch-wheel.js, given `channelOf`.
  *
  * @param {Array<Object>} notes
  * @param {Object} config - `MPE_DEFAULTS` merged over, plus `ticksPerBeat`
- * @returns {{events:Array, channelsUsed:Array<number>}}
+ * @returns {{events:Array, channelsUsed:Array<number>, channelOf:Map<number,number>}} the
+ *   note events, the channels used, and each note's channel by its index
  */
 export function buildMpeNoteEvents(notes, config) {
   const { master, bendRange, ticksPerBeat = 480 } = config;
@@ -123,29 +111,17 @@ export function buildMpeNoteEvents(notes, config) {
     }
   }
 
+  const channelOf = new Map();
   for (const { index, startTick, endTick, channel } of plan) {
     const note = notes[index];
-    const cents = (Number(note.microtuning) || 0) * 100;
-    const value = bendValueFor(cents, bendRange);
-    const lo = value & 0x7f;
-    const hi = (value >> 7) & 0x7f;
-
-    if (cents !== 0) {
-      // Before the note-on, and after the note-off of whatever used this
-      // channel before it, which sortOrder 0.5 arranges.
-      events.push({ tick: startTick, sortOrder: 0.5, bytes: [0xe0 | channel, lo, hi] });
-    }
+    channelOf.set(index, channel);
     const velocity = Math.max(1, Math.min(127, Math.round((note.velocity ?? 0.8) * 127)));
     for (const p of Array.isArray(note.pitch) ? note.pitch : [note.pitch]) {
       if (typeof p !== 'number') continue;
       events.push({ tick: startTick, sortOrder: 1, bytes: [0x90 | channel, p, velocity] });
       events.push({ tick: endTick, sortOrder: 0, bytes: [0x80 | channel, p, 0] });
     }
-    if (cents !== 0) {
-      // Back to centre, so the next note on this channel is not still bent.
-      events.push({ tick: endTick, sortOrder: 0.1, bytes: [0xe0 | channel, BEND_CENTRE & 0x7f, (BEND_CENTRE >> 7) & 0x7f] });
-    }
   }
 
-  return { events, channelsUsed: used };
+  return { events, channelsUsed: used, channelOf };
 }

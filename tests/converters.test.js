@@ -780,7 +780,10 @@ test("a piece that survives the export is not warned about", () => {
 });
 
 test("the fields MIDI cannot express are named", () => {
-  assert.ok(lossFields(aPiece([aNote({ microtuning: 0.25 })])).includes("microtuning"));
+  assert.ok(!lossFields(aPiece([aNote({ tuning: 0.25 })])).includes("tuning"),
+    "a tuned note alone is written as the channel's pitch wheel");
+  assert.ok(lossFields(aPiece([aNote({ tuning: 0.25 }), aNote({ tuning: -0.25, pitch: 64 })])).includes("tuning"),
+    "two tunings at once on one channel cannot both be right");
   assert.ok(lossFields(aPiece([aNote({ channel: 3 })])).includes("channel"),
     "per-note channel; track.channel is read, note.channel is not");
   assert.ok(lossFields(aPiece([aNote({})], { loop: true })).includes("loop"),
@@ -812,20 +815,33 @@ test("the loss list names every modulation type the writer renders", () => {
 });
 
 test("warnings are per loss, not per note, and carry a reason", () => {
-  const notes = [aNote({ microtuning: 0.1 }), aNote({ microtuning: 0.2 }), aNote({ microtuning: 0.3 })];
+  const notes = [aNote({ tuning: 0.1 }), aNote({ tuning: 0.2 }), aNote({ tuning: 0.3 })];
   const losses = midiLosses(aPiece(notes));
-  assert.equal(losses.length, 1, "three notes, one field, one warning");
+  assert.equal(losses.length, 1, "three notes at once, one field, one warning");
   assert.ok(losses[0].why.length > 20, "and an explanation, since the point is to act on it");
 });
 
-test("validate takes the target, and only then reports warnings", async () => {
+test("validate takes the target, and only then reports losses", async () => {
   const { default: io } = await import("../src/index.js");
-  const piece = aPiece([aNote({ microtuning: 0.25 })]);
+  const piece = aPiece([aNote({ tuning: 0.25 })], { loop: true });
   assert.ok(!("warnings" in io.validate(piece)), "the default is unchanged: no key at all");
   const forMidi = io.validate(piece, { for: "midi" });
   assert.equal(forMidi.valid, true, "losing a field is not an invalid piece");
-  assert.equal(forMidi.warnings.length, 1);
+  assert.deepEqual(forMidi.warnings.map((w) => w.field), ["loop"], "the tuning is written; the loop is not");
   assert.equal(forMidi.normalized !== null, true, "normalisation is unaffected");
+});
+
+test("validate renames a note field written under its old name, and says so", async () => {
+  const { default: io } = await import("../src/index.js");
+  const piece = aPiece([aNote({ microtuning: 0.25, pitchEnvelope: [0, 1], amplitudeEnvelope: [1, 0.5] })]);
+  const result = io.validate(piece);
+  assert.deepEqual(result.warnings.map((w) => w.field).sort(), ["amplitudeEnvelope", "microtuning", "pitchEnvelope"]);
+  assert.ok(result.warnings.every((w) => w.kind === "renamed"));
+  const note = result.normalized.tracks[0].notes[0];
+  assert.deepEqual([note.tuning, note.bend, note.dynamics], [0.25, [0, 1], [1, 0.5]]);
+  assert.ok(!("microtuning" in note) && !("pitchEnvelope" in note) && !("amplitudeEnvelope" in note));
+  const both = io.validate(aPiece([aNote({ tuning: 0.1, microtuning: 0.25 })]));
+  assert.equal(both.normalized.tracks[0].notes[0].tuning, 0.1, "the new name wins over the old");
 });
 
 // ─── one loss list per target, and two kinds of loss ───────────────────────
@@ -843,13 +859,14 @@ test("validate takes the target, and only then reports warnings", async () => {
 
 test("the target is part of the question", () => {
   assert.deepEqual(EXPORT_TARGETS.sort(), ["midi", "musicxml"]);
-  const note = aNote({ microtuning: 0.25, articulations: ["staccato"] });
+  const note = aNote({ tuning: 0.25, articulations: ["staccato"] });
   const piece = aPiece([note], { loop: true, synth: "piano" });
   const midi = exportLosses(piece, "midi").map((w) => w.field);
   const xml = exportLosses(piece, "musicxml").map((w) => w.field);
-  // Both lose a cents offset and a sampler name: neither has anywhere to put them.
-  assert.ok(midi.includes("microtuning"));
-  assert.ok(xml.includes("microtuning"));
+  // A tuning is a pitch wheel in MIDI and nothing on a score; a sampler name is
+  // nothing on either.
+  assert.ok(!midi.includes("tuning"));
+  assert.ok(xml.includes("tuning"));
   assert.ok(midi.includes("synth"));
   assert.ok(xml.includes("synth"));
   // The staccato now survives both, so neither complains about it.
@@ -896,10 +913,10 @@ test("a piece with nothing in it is clean on both", () => {
 
 test("validate takes either target", async () => {
   const { default: io } = await import("../src/index.js");
-  const piece = aPiece([aNote({ microtuning: 0.25 })]);
+  const piece = aPiece([aNote({ tuning: 0.25 })]);
   const has = (target, field) => io.validate(piece, { for: target }).warnings.some((w) => w.field === field);
-  assert.ok(has("midi", "microtuning"));
-  assert.ok(has("musicxml", "microtuning"));
+  assert.ok(!has("midi", "tuning"), "a lone tuned note is a pitch wheel");
+  assert.ok(has("musicxml", "tuning"), "a score has no place for it");
   // a program number is written on both, so neither complains
   assert.ok(!has("midi", "synth"), "synth 69 is a program change");
   assert.ok(!has("musicxml", "synth"), "and is a <midi-program> on a score");
@@ -1065,13 +1082,14 @@ test("a rest is a rest", () => {
 
 // ─── MPE, so a note can carry its own tuning ────────────────────────────────
 //
-// `microtuning` is a per-note offset in semitones and a Standard MIDI File has
+// `tuning` is a per-note offset in semitones and a Standard MIDI File has
 // no message for it. A channel's pitch wheel moves every note on that channel,
 // so in polyphony the only correct answer is a channel per note — which is
 // what MPE is. It is opt-in, because a file with one channel per note is wrong
 // for a synth that is not in MPE mode, and wrong for any GM instrument.
 
 import { assignMpeChannels, bendValueFor, MPE_DEFAULTS, buildMpeNoteEvents } from "../src/midi-mpe.js";
+import { pitchWheelCurves, pitchWheelEvents, pitchWheelPlan } from "../src/pitch-wheel.js";
 
 const mpeNote = (pitch, time, duration = 1, extra = {}) =>
   ({ pitch, duration, time, velocity: 0.8, ...extra });
@@ -1102,7 +1120,7 @@ test("notes sounding at once get a channel each, and a channel is reused once fr
 test("more simultaneous notes than channels is refused, not mis-tuned", () => {
   // Two notes on one channel cannot both be detuned, and a file that quietly
   // tunes one of them wrong is worse than no file.
-  const at = (n) => Array.from({ length: n }, (_, i) => mpeNote(60 + i, 0, 4, { microtuning: 0.01 }));
+  const at = (n) => Array.from({ length: n }, (_, i) => mpeNote(60 + i, 0, 4, { tuning: 0.01 }));
 
   assert.doesNotThrow(() => assignMpeChannels(at(MPE_DEFAULTS.members.length)),
     "as many at once as there are member channels");
@@ -1121,18 +1139,22 @@ test("the default pool leaves the drum channel out of the zone", () => {
   assert.equal(MPE_DEFAULTS.master, 15, "15 is the MPE master");
 });
 
-test("mpe is opt-in, and off by default microtuning is still lost", async () => {
-  const piece = mpePiece([mpeNote(60, 0, 2, { microtuning: 0.25 })]);
+test("a tuned note is bent on its track's channel without mpe, and on its own with", async () => {
+  const piece = mpePiece([mpeNote(60, 0, 2, { tuning: 0.25 })]);
   const plain = parse(midiBytes(piece));
   const bent = parse(midiBytes(piece, { mpe: true }));
-  assert.equal(plain.pitchBends, 0, "without mpe there is one channel and one bend, so none is written");
+  assert.ok(plain.pitchBends > 0, "without mpe the track's one channel carries the wheel");
+  assert.equal(plain.pitchBendRange, 2, "sized to what the curve needs, at least 2 semitones");
   assert.equal(bent.pitchBendRange, 48, "with mpe the sensitivity is sent as RPN 0/0");
   assert.ok(bent.pitchBends > 0, "and the note is bent");
   assert.equal(plain.notes, bent.notes, "the same notes either way");
 });
 
-test("a detuned note is bent before it sounds and released after", () => {
-  const { events } = buildMpeNoteEvents([mpeNote(60, 0, 2, { microtuning: 0.25 })], { ...MPE_DEFAULTS, ticksPerBeat: 480 });
+test("a tuned note is bent before it sounds and released after", () => {
+  const notes = [mpeNote(60, 0, 2, { tuning: 0.25 })];
+  const { channelOf } = buildMpeNoteEvents(notes, { ...MPE_DEFAULTS, ticksPerBeat: 480 });
+  const { written } = pitchWheelPlan(pitchWheelCurves(notes), (i) => channelOf.get(i));
+  const events = pitchWheelEvents(written, 480, { range: 48, sensitivity: false });
   const bends = events.filter((e) => (e.bytes[0] & 0xf0) === 0xe0);
   assert.ok(bends.length >= 2, "one to set it, one to centre it again");
   assert.ok(bends[0].sortOrder < 1, "set before the note-on that shares its tick");
@@ -1142,7 +1164,7 @@ test("a detuned note is bent before it sounds and released after", () => {
     "the last bend is centre, so the next note on that channel is not still bent");
 });
 
-test("a note with no microtuning gets no bend events", () => {
+test("a note with no tuning gets no bend events", () => {
   const { events } = buildMpeNoteEvents([mpeNote(60, 0, 1)], { ...MPE_DEFAULTS, ticksPerBeat: 480 });
   assert.equal(events.filter((e) => (e.bytes[0] & 0xf0) === 0xe0).length, 0);
 });

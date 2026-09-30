@@ -1,6 +1,7 @@
 /* jmon-to-midi.js - Convert JMON format to Standard MIDI File (no external deps) */
 import { compilePerformanceTrack as compileEvents } from "./format/performance.js";
 import { buildMpeNoteEvents, MPE_DEFAULTS } from "./midi-mpe.js";
+import { pitchWheelCurves, pitchWheelEvents, pitchWheelPlan } from "./pitch-wheel.js";
 import {
     tempoSegments,
     timeSignatureSegments,
@@ -255,7 +256,7 @@ function buildMidiFile(piece, options = {}) {
     const ticksPerBeat = 480;
     // `mpe` is opt-in: a file with one channel per note is wrong for a synth
     // that is not in MPE mode, and wrong for any GM instrument. Pass it when the
-    // destination is an MPE one and `microtuning` matters.
+    // destination is an MPE one and tuned or bent notes sound together.
     const mpeConfig = typeof options.mpe === "object" && options.mpe !== null ? options.mpe : null;
     const mpe = options.mpe === true || mpeConfig !== null;
     const masterChannel = (mpeConfig && mpeConfig.master) ?? MPE_DEFAULTS.master;
@@ -397,13 +398,16 @@ function buildMidiFile(piece, options = {}) {
         events.push(...buildControlEvents(controllerEvents(track, piece, trackIndex), channel, ticksPerBeat));
 
         if (mpe) {
-            // One channel per note, so `microtuning` — a per-note offset with
-            // no MIDI message of its own — can be written as a pitch bend.
-            // Throws if the texture is denser than the member channels, because
-            // two notes on one channel cannot both be detuned and a file that
-            // quietly mis-tunes is worse than no file.
-            const plan = buildMpeNoteEvents(notesWithTime, { ...MPE_DEFAULTS, ...mpeConfig, ticksPerBeat });
+            // One channel per note, so every note can carry its own wheel:
+            // its tuning, and its bend. Throws if the texture is denser than
+            // the member channels, because two notes on one channel cannot
+            // both be tuned and a file that quietly mis-tunes is worse than no
+            // file.
+            const zone = { ...MPE_DEFAULTS, ...mpeConfig, ticksPerBeat };
+            const plan = buildMpeNoteEvents(notesWithTime, zone);
             events.push(...plan.events);
+            const { written } = pitchWheelPlan(pitchWheelCurves(notesWithTime), (index) => plan.channelOf.get(index));
+            events.push(...pitchWheelEvents(written, ticksPerBeat, { range: zone.bendRange, sensitivity: false }));
             if (plan.channelsUsed.length > 1) {
                 // Expression and dynamics, on the master channel, so one
                 // place governs the zone.
@@ -454,9 +458,11 @@ function buildMidiFile(piece, options = {}) {
             }
         }
 
-        // Pitch curves (glissando, portamento, bend, pitch envelopes) compile
-        // to cents anchors; render them as MIDI pitch wheel events.
-        events.push(...buildPitchBendEvents(notesWithTime, channel, ticksPerBeat));
+        // A note's tuning and bend are one wheel curve (see pitch-wheel.js).
+        // Curves that overlap on this one channel cannot all be drawn: the
+        // later ones are left unbent, and export-losses reports them.
+        const { written } = pitchWheelPlan(pitchWheelCurves(notesWithTime), () => channel);
+        events.push(...pitchWheelEvents(written, ticksPerBeat));
 
         // And the dynamics that are not pitch: CC 11, which a synth applies to
         // itself. A term MIDI cannot say is left out rather than approximated
@@ -553,90 +559,6 @@ function buildTempoRampEvents(piece, ticksPerBeat) {
                 emit(beat, rounded);
                 previous = rounded;
             }
-        }
-    }
-
-    return events;
-}
-
-function buildPitchBendEvents(notes, channel, ticksPerBeat) {
-    let pitchMods = [];
-    try {
-        const perf = compileEvents({ events: notes });
-        pitchMods = (perf.modulations || []).filter(
-            m => m.type === 'pitch' && Array.isArray(m.anchors) && m.anchors.length > 0
-        );
-    } catch (_) {
-        return [];
-    }
-    if (pitchMods.length === 0) return [];
-
-    const maxCents = Math.max(
-        ...pitchMods.flatMap(m => m.anchors.map(a => Math.abs(a.value)))
-    );
-    const rangeSemitones = Math.min(24, Math.max(2, Math.ceil(maxCents / 100)));
-    const centerValue = 8192;
-
-    const events = [];
-
-    // RPN 0,0 = pitch bend sensitivity, in semitones (MSB) + cents (LSB),
-    // then deselect the RPN so later CCs can't change it accidentally.
-    const rpn = [[101, 0], [100, 0], [6, rangeSemitones], [38, 0], [101, 127], [100, 127]];
-    // Array sort is stable, so equal tick/sortOrder preserves RPN sequence.
-    rpn.forEach(([cc, value]) => {
-        events.push({ tick: 0, sortOrder: -1, bytes: [0xb0 | channel, cc, value] });
-    });
-
-    const toBendValue = (cents) => {
-        const v = centerValue + Math.round((cents / (rangeSemitones * 100)) * (centerValue - 1));
-        return Math.max(0, Math.min(16383, v));
-    };
-    const pushBend = (tick, value, sortOrder) => {
-        events.push({
-            tick,
-            sortOrder,
-            bytes: [0xe0 | channel, value & 0x7f, (value >> 7) & 0x7f]
-        });
-    };
-
-    // Sample each linear segment finely enough to sound continuous.
-    const stepTicks = Math.max(1, Math.round(ticksPerBeat / 16));
-
-    for (const mod of pitchMods) {
-        const anchors = mod.anchors;
-        // Initial value lands between note-off (0) and note-on (1) at the
-        // same tick so the wheel is set before the note sounds.
-        pushBend(Math.round(anchors[0].time * ticksPerBeat), toBendValue(anchors[0].value), 0.5);
-
-        for (let k = 1; k < anchors.length; k++) {
-            const a = anchors[k - 1];
-            const b = anchors[k];
-            const aTick = Math.round(a.time * ticksPerBeat);
-            const bTick = Math.round(b.time * ticksPerBeat);
-            let lastValue = toBendValue(a.value);
-            for (let tick = aTick + stepTicks; tick < bTick; tick += stepTicks) {
-                const frac = (tick - aTick) / (bTick - aTick);
-                const value = toBendValue(a.value + (b.value - a.value) * frac);
-                if (value === lastValue) continue;
-                pushBend(tick, value, 2);
-                lastValue = value;
-            }
-            // The arrival value lands on the note boundary, where the
-            // recenter (0.25) also sits. Order it just ahead of the recenter
-            // rather than at 2, or the wheel is left off-centre for whatever
-            // follows.
-            const isArrival = k === anchors.length - 1;
-            const endValue = toBendValue(b.value);
-            if (endValue !== lastValue || bTick === aTick) {
-                pushBend(bTick, endValue, isArrival ? 0.2 : 2);
-            }
-        }
-
-        // Recenter so the next note starts clean. sortOrder 0.25 keeps the
-        // reset ahead of a following curve's initial value at the same tick.
-        const last = anchors[anchors.length - 1];
-        if (toBendValue(last.value) !== centerValue) {
-            pushBend(Math.round(mod.end * ticksPerBeat), centerValue, 0.25);
         }
     }
 

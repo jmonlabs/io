@@ -10,6 +10,17 @@
 // dependency-free ESM served straight from source. The schema is the written
 // specification; this is the runtime guard.
 
+/**
+ * Note fields that changed name in 3.4, to what they are called now. The old
+ * spelling is still read everywhere; here it is renamed, with a warning, so a
+ * piece written before the change comes out in today's words.
+ */
+export const RENAMED_NOTE_FIELDS = {
+  microtuning: "tuning",
+  pitchEnvelope: "bend",
+  amplitudeEnvelope: "dynamics",
+};
+
 export class JmonValidator {
   constructor() {}
 
@@ -20,6 +31,7 @@ export class JmonValidator {
    */
   validateAndNormalize(obj) {
     const errors = [];
+    const warnings = [];
     let normalized = { ...obj };
 
     try {
@@ -80,6 +92,15 @@ export class JmonValidator {
           if (note.time === undefined) {
             note.time = 0; // Will be calculated if needed
           }
+
+          for (const [was, is] of Object.entries(RENAMED_NOTE_FIELDS)) {
+            if (!(was in note)) continue;
+            if (!(is in note)) note[is] = note[was];
+            delete note[was];
+            if (!warnings.some((w) => w.field === was)) {
+              warnings.push({ field: was, why: `\`${was}\` is now \`${is}\`; renamed`, kind: "renamed" });
+            }
+          }
         });
       });
 
@@ -89,11 +110,9 @@ export class JmonValidator {
       normalized.timeSignature = normalized.timeSignature || "4/4";
       normalized.keySignature = normalized.keySignature || "C";
 
-      return {
-        valid: errors.length === 0,
-        errors,
-        normalized,
-      };
+      const result = { valid: errors.length === 0, errors, normalized };
+      if (warnings.length > 0) result.warnings = warnings;
+      return result;
     } catch (error) {
       errors.push(`Validation error: ${error.message}`);
       return {

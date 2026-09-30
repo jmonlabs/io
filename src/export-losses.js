@@ -1,4 +1,5 @@
 import { compilePerformanceTrack } from "./format/performance.js";
+import { pitchWheelCurves, pitchWheelPlan } from "./pitch-wheel.js";
 
 /**
  * What each exporter will not carry.
@@ -44,7 +45,9 @@ const EXPORTERS = {
     },
     noteFields: new Set([
       "pitch", "duration", "time", "velocity",
-      "articulations", "articulation", "glissTarget", "pitchEnvelope", "amplitudeEnvelope",
+      "articulations", "articulation", "glissTarget",
+      "tuning", "bend", "dynamics",
+      "microtuning", "pitchEnvelope", "amplitudeEnvelope", // the old names, still read
     ]),
     trackFields: new Set([
       "label", "name", "notes", "events", "synth", "instrument",
@@ -60,9 +63,12 @@ const EXPORTERS = {
         kind: "format",
         why: "a Standard MIDI File cannot loop; the track is written one pass only",
       },
-      microtuning: {
+      // A tuning or a bend is written as the channel's pitch wheel. That
+      // fails only when two of them sound at once on one channel, which is
+      // checked below rather than by the field's presence.
+      overlap: {
         kind: "format",
-        why: "a per-note cents offset has no MIDI message; use MPE, or write the pitch bent",
+        why: "a pitch wheel is per channel, so notes tuned or bent while another is on the same channel are written unbent; export with { mpe: true } to give each note a channel",
       },
       // channel is read from the track, not the note
       channel: {
@@ -106,18 +112,21 @@ const EXPORTERS = {
     ]),
     fieldNotes: {
       audioGraph: { kind: "format", why: "a score has no audio" },
-      microtuning: {
+      tuning: {
         kind: "format",
         why: "a score names a pitch, not a tuning; <alter> is whole and half steps only",
       },
-      pitchEnvelope: {
+      bend: {
         kind: "format",
-        why: "a pitch envelope is a curve with a shape; <glissando> and <slide> are a straight line between two notes, and cannot hold it",
+        why: "a bend is a curve with a shape; <glissando> and <slide> are a straight line between two notes, and cannot hold it",
       },
-      amplitudeEnvelope: {
+      dynamics: {
         kind: "format",
         why: "a score marks a dynamic or a hairpin between notes; the swell inside one held note is a way of playing it, not a sign",
       },
+      microtuning: { kind: "format", why: "a score names a pitch, not a tuning; <alter> is whole and half steps only" },
+      pitchEnvelope: { kind: "format", why: "a bend is a curve with a shape; <glissando> and <slide> are a straight line between two notes, and cannot hold it" },
+      amplitudeEnvelope: { kind: "format", why: "a score marks a dynamic or a hairpin between notes; the swell inside one held note is a way of playing it, not a sign" },
       channel: { kind: "format", why: "a score has no channel" },
       cc: {
         kind: "format",
@@ -145,6 +154,17 @@ export const EXPORT_TARGETS = Object.keys(EXPORTERS);
  *   one entry per distinct loss, in the order first encountered
  * @throws {Error} on an unknown target, so a typo does not silently pass
  */
+/** Notes with a numeric `time`, laid end to end where one is missing, as the writer does. */
+function withTimes(notes) {
+  let current = 0;
+  return notes.map((note) => {
+    if (!note || typeof note !== "object") return note;
+    const time = typeof note.time === "number" ? note.time : current;
+    current = time + (Number(note.duration) || 1);
+    return { ...note, time };
+  });
+}
+
 export function exportLosses(piece, target = "midi") {
   const exporter = EXPORTERS[target];
   if (!exporter) {
@@ -197,11 +217,23 @@ export function exportLosses(piece, target = "midi") {
       }
     }
 
+    const notes = Array.isArray(track.notes) ? track.notes : [];
+    if (notes.length === 0) continue;
+
+    // Tuned or bent notes that sound together on the track's one channel:
+    // the writer draws the first and leaves the others unbent.
+    if (target === "midi") {
+      const { dropped } = pitchWheelPlan(pitchWheelCurves(withTimes(notes)), () => 0);
+      for (const curve of dropped) {
+        const note = notes[curve.index];
+        const field = (note.tuning ?? note.microtuning) ? "tuning" : "bend";
+        add(path, field, exporter.fieldNotes.overlap.why, exporter.fieldNotes.overlap.kind);
+      }
+    }
+
     // What the format layer derives that this writer cannot draw. Derived from
     // the two rather than transcribed, so a new articulation type is caught
     // here instead of vanishing.
-    const notes = Array.isArray(track.notes) ? track.notes : [];
-    if (notes.length === 0) continue;
     let perf;
     try {
       perf = compilePerformanceTrack({ notes }, { tempo: piece.tempo ?? 120 });

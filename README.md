@@ -32,15 +32,20 @@ assembles all four and binds the injections, so this becomes `jm.midi(piece)`.
 
 **Exactly:** pitches, times, durations, tracks, `tempo` and `tempoMap` (one
 event per change), `timeSignature` and `timeSignatureMap`, `keySignature` and
-`keySignatureMap`, and glissando, portamento and bend, written as a pitch-bend
-sweep with the range widened via RPN 0 and read back as an articulation.
+`keySignatureMap`, and a note's `tuning` and `bend` (and the glissando,
+portamento and bend articulations, which compile to a bend), written as the
+channel's pitch wheel with the range set via RPN 0 and read back as an
+articulation. The wheel is per channel, so two notes tuned or bent differently
+at the same time on one track cannot both be right: the later one is written
+unbent and `validate` says so. `io.midi(piece, { mpe: true })` gives every note
+a channel of its own instead, for a synth in MPE mode.
 
 **Approximately:** velocity, to within MIDI's 7 bits. And an accelerando: a
 tempo *ramp* has no MIDI message, so it is sampled as a staircase of tempo
 changes on a sixteenth grid.
 
-**Not at all:** synths, the audio graph, effects, microtuning. A MIDI file has
-nowhere to put them.
+**Not at all:** synths, the audio graph, effects. A MIDI file has nowhere to
+put them.
 
 `midiToJmon` needs no audio library, and reports time in quarter notes rather
 than seconds, so times round-trip exactly. Pass `{ parser }` to inject another
