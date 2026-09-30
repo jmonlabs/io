@@ -74,6 +74,36 @@ at its own rate, so a note straddling a change is partly at each.
 `parseKeySignature` knows that a minor key takes its *relative* major's
 accidentals: `Am` is 0 sharps, not 3.
 
+## A note's pitch, beyond the keys
+
+A pitch is a MIDI number, and three optional fields say what happens between
+and around the keys. Each names what the note is, not how it is played:
+
+```js
+{ pitch: 69, duration: 2, time: 0, tuning: -0.15 }            // A4, 15 cents flat, throughout
+{ pitch: 69, duration: 2, time: 2, bend: [0, -0.5] }          // A4 sliding a quarter tone down
+{ pitch: 69, duration: 4, time: 4, dynamics: [0.6, 1, 0.7] }  // swells, then eases
+```
+
+- `tuning` — the note's tuning: a fixed offset from `pitch`, in semitones.
+  The note sounds at `pitch + tuning`.
+- `bend` — what the pitch does over the note, in semitones relative to
+  `pitch + tuning`: numbers spread evenly across the duration, or anchors
+  `{ time, value }` with `time` in beats from the note's start. The
+  `glissando`, `portamento` and `bend` articulations are shorthands that
+  compile to it; when a note has both, the field wins.
+- `dynamics` — what the loudness does over the note, as multiples of its
+  velocity, in the same two spellings. This is what `bow` (jmon/algo) writes.
+
+`compileEvents` turns all three, and the articulations, into the one set of
+modulations the players and the writers read. The names date from algo 3.4;
+`microtuning`, `pitchEnvelope` and `amplitudeEnvelope` are still read, and
+`validate` renames them in `normalized` with a warning of kind `"renamed"`.
+
+In a MIDI file, `tuning` and `bend` are one pitch-wheel curve (see "What
+survives", above): the tuning is the baseline the bend moves around.
+`dynamics` is CC 11.
+
 ## Injecting it
 
 A host that cannot `import` this package can be handed it instead. Node
@@ -93,7 +123,7 @@ layer substitutable rather than a hard dependency.
 node --test tests/*.test.js
 ```
 
-94 tests, no dependencies and no network.
+157 tests, no dependencies and no network.
 
 ## License
 
