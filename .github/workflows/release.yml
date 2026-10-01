@@ -1,0 +1,53 @@
+name: Release
+
+# The version in package.json decides: once CI has passed on main, a version
+# that has no tag yet gets its tag (v1.2.3) and a GitHub release. To publish,
+# change the version; nothing else.
+#
+# The release notes are the CHANGELOG.md section for that version ("## 1.2.3"
+# or "## 1.2"), or else the commit messages since the previous tag.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Tag and release the version, once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists"
+            exit 0
+          fi
+          short="${version%.*}"
+          notes=""
+          if [ -f CHANGELOG.md ]; then
+            notes=$(awk -v a="## $version" -v b="## $short" '
+              $0 == a || $0 == b { on = 1; next }
+              on && /^## / { exit }
+              on { print }
+            ' CHANGELOG.md)
+          fi
+          if [ -z "$(echo "$notes" | tr -d '[:space:]')" ]; then
+            previous=$(git describe --tags --abbrev=0 "$SHA" 2>/dev/null || true)
+            notes=$(git log --format='- %s' ${previous:+$previous..}"$SHA")
+          fi
+          gh release create "$tag" --target "$SHA" --title "$tag" --notes "$notes"
