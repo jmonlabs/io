@@ -89,3 +89,23 @@ test("the MIDI file carries control changes, pitch bends and channel pressure fr
   const raw = [...new Uint8Array(bytes)];
   assert.ok(raw.some((b, i) => b === 0xd0 && raw[i + 1] === 100), "channel pressure 100");
 });
+
+test("an automation lane may name a control of the track's ison, and it is that controller for the MIDI writer too", () => {
+  const wind = { format: "ison", version: "1.0", name: "wind", sources: { w: { faust: "wind.dsp" } }, controls: { whistle: { cc: 1, default: 0.3 }, gusts: { cc: 3, default: 0.5 } } };
+  const piece = {
+    tempo: 120,
+    tracks: [{ label: "Wind", synth: wind, notes: [{ pitch: 64, duration: 4, time: 0 }] }],
+    automation: { tracks: { Wind: [
+      { target: "whistle", anchorPoints: [{ time: 0, value: 0 }, { time: 2, value: 1 }] },
+      { target: "midi.cc3", anchorPoints: [{ time: 0, value: 0.5 }] },
+      { target: "breath", anchorPoints: [{ time: 0, value: 1 }] }, // no such control
+    ] } },
+  };
+  const events = controllerEvents(piece.tracks[0], piece, 0);
+  const controllers = [...new Set(events.map((e) => e.controller))].sort();
+  assert.deepEqual(controllers, [1, 3], "the name became its controller; the unknown name drives nothing");
+  assert.equal(events.find((e) => e.controller === 1 && e.time === 2)?.value, 1);
+  const parsed = parseMidiFile(midiBytes(piece));
+  assert.ok(parsed.tracks.some((t) => t.controlChanges?.[1]?.length > 1), "the MIDI file carries the lane as CC 1");
+  assert.ok(!parsed.tracks.some((t) => t.controlChanges && Object.keys(t.controlChanges).length > 2), "and nothing for the unknown name");
+});

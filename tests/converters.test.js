@@ -857,6 +857,15 @@ test("validate renames a note field written under its old name, and says so", as
 // short, and every entry in it is a wall rather than a to-do. The last test in
 // this section measures that claim against the writer instead of trusting it.
 
+test("a note's variant is read by neither writer yet, and both say so", () => {
+  const piece = aPiece([aNote({ variant: "vibrato" })]);
+  for (const target of EXPORT_TARGETS) {
+    const loss = exportLosses(piece, target).find((w) => w.field === "variant");
+    assert.ok(loss, `${target} reports the variant`);
+    assert.equal(loss.kind, "writer", `${target}: a to-do, not a wall`);
+  }
+});
+
 test("the target is part of the question", () => {
   assert.deepEqual(EXPORT_TARGETS.sort(), ["midi", "musicxml"]);
   const note = aNote({ tuning: 0.25, articulations: ["staccato"] });

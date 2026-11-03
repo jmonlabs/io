@@ -118,14 +118,14 @@ function fromAutomation(track, piece, trackIndex) {
 
   const events = [];
   for (const lane of lanes) {
-    const target = parseAutomationTarget(lane.target);
-    if (target.kind !== "midi" || !Number.isFinite(target.cc)) continue;
-    if (resolveCcHint(target.cc, piece)) continue;
+    const cc = laneController(lane.target, track);
+    if (cc === null) continue;
+    if (resolveCcHint(cc, piece)) continue;
     let last = null;
     const step = (time, value, always = false) => {
       const v = clamp(value, 0, 1);
       if (!always && v === last) return;
-      events.push({ time, type: "cc", controller: target.cc, value: v });
+      events.push({ time, type: "cc", controller: cc, value: v });
       last = v;
     };
     const { points } = lane;
@@ -142,6 +142,26 @@ function fromAutomation(track, piece, trackIndex) {
     }
   }
   return events;
+}
+
+/**
+ * The controller a lane drives: `midi.cc1`, or the name of one of the track's
+ * instrument's controls, when the instrument is an ison (`synth.controls`,
+ * each with its `cc`). One mechanism, so a lane written by name is the same
+ * controller move for a player and for the MIDI writer. `null` when the lane
+ * drives neither.
+ *
+ * @param {string} target - the lane's target
+ * @param {Object} [track] - the lane's track, for its `synth.controls`
+ * @returns {number|null}
+ */
+export function laneController(target, track) {
+  const parsed = parseAutomationTarget(target);
+  if (parsed.kind === "midi") return Number.isFinite(parsed.cc) ? parsed.cc : null;
+  const controls = track?.synth?.format === "ison" ? track.synth.controls : null;
+  if (!controls || typeof target !== "string" || target.includes(".")) return null;
+  const cc = Number(controls[target]?.cc);
+  return Number.isFinite(cc) ? cc : null;
 }
 
 function clamp(value, low, high) {

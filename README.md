@@ -64,6 +64,7 @@ io.format.keySignatureSegments(piece) // { time, sharps, minor, key }
 io.format.parseKeySignature("F# minor")     // { sharps: 3, minor: true }
 io.format.automationChannels(piece)   // all three spellings, flattened
 io.format.compileEvents(track)              // articulations -> modulations
+io.format.controllerEvents(track, piece)    // track.cc, note.modulations, lanes (midi.ccN, or an ison control by name)
 io.validate(piece)                    // structural guard
 ```
 
@@ -103,6 +104,22 @@ modulations the players and the writers read. The names date from algo 3.4;
 In a MIDI file, `tuning` and `bend` are one pitch-wheel curve (see "What
 survives", above): the tuning is the baseline the bend moves around.
 `dynamics` is CC 11.
+
+## A note's way of playing
+
+An instrument recorded in several ways — non vibrato, vibrato, tremolo,
+pizzicato — keeps them as separate presets. The track names the ones it wants
+(`synth.variants`, see jmon/sound), and a note picks one by name:
+
+```js
+{ pitch: 69, duration: 8, time: 0, variant: "vibrato" }
+```
+
+A note with no variant, or one the instrument does not have, is played the
+track's usual way. `variant` is not an articulation: `articulations` describe
+the note and compile to modulations (a `vibrato` articulation is a synthetic
+one), while `variant` chooses the recording. Neither writer carries it yet
+(`exportLosses` says so): a program change before the note could, in MIDI.
 
 ## Injecting it
 

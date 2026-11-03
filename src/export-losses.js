@@ -75,6 +75,10 @@ const EXPORTERS = {
         kind: "writer",
         why: "the writer takes the channel from the track (track.channel), not the note",
       },
+      variant: {
+        kind: "writer",
+        why: "a variant is another preset of the instrument; a program change on the channel before the note could say it, and the writer does not write one yet",
+      },
       // A program number is written; a sampler name is not. This one is decided
       // by the value rather than by the key, so it is checked separately below.
       synth: {
@@ -128,6 +132,10 @@ const EXPORTERS = {
       pitchEnvelope: { kind: "format", why: "a bend is a curve with a shape; <glissando> and <slide> are a straight line between two notes, and cannot hold it" },
       amplitudeEnvelope: { kind: "format", why: "a score marks a dynamic or a hairpin between notes; the swell inside one held note is a way of playing it, not a sign" },
       channel: { kind: "format", why: "a score has no channel" },
+      variant: {
+        kind: "writer",
+        why: "a score says pizz., arco or a playing technique as a direction over the note; the writer does not write one yet",
+      },
       cc: {
         kind: "format",
         why: "MusicXML has <technical>, which holds instrument-specific words, and nowhere to put a controller number; a score says dynamics and articulations, not CC",
