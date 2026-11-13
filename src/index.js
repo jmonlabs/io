@@ -47,6 +47,7 @@ export {
 } from "./format/timeline.js";
 
 export { controllerEvents, noteRelativeBeats } from "./format/controllers.js";
+export { recordedTrack } from "./format/recording.js";
 
 export {
   compilePerformance,
@@ -72,6 +73,7 @@ import * as musicxmlModule from "./musicxml.js";
 import * as timeline from "./format/timeline.js";
 import * as performance from "./format/performance.js";
 import * as controllers from "./format/controllers.js";
+import * as recording from "./format/recording.js";
 import { JmonValidator } from "./format/validate.js";
 import { deriveVisualFromArticulations } from "./format/notation.js";
 import { exportLosses } from "./export-losses.js";
@@ -103,6 +105,7 @@ export const io = {
   format: {
     ...timeline,
     ...controllers,
+    ...recording,
     compilePerformance: performance.compilePerformance,
     compilePerformanceTrack: performance.compilePerformanceTrack,
     compileEvents: performance.compilePerformanceTrack,
